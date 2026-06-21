@@ -27,10 +27,15 @@ export async function POST(request: NextRequest) {
       );
     }
 
+    // Get base URL from request headers
+    const host = request.headers.get('host') || 'localhost:3000';
+    const protocol = request.headers.get('x-forwarded-proto') || 'http';
+    const baseUrl = `${protocol}://${host}`;
+
     // Run invite generation agent
-    const agent = new InviteRsvpAgent();
-    const result = await agent.execute({ 
-      event, 
+    const agent = new InviteRsvpAgent(baseUrl);
+    const result = await agent.execute({
+      event,
       messageText,
       style: style || 'modern'
     });

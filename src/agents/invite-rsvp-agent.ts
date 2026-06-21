@@ -33,14 +33,14 @@ export class InviteRsvpAgent extends BaseAgent {
   private pixverseApiKey: string;
   private appUrl: string;
 
-  constructor() {
+  constructor(baseUrl?: string) {
     super({
       name: 'InviteRSVP',
       description: 'Generates AI-powered invites with PixVerse and manages RSVPs',
       enabled: true,
     });
     this.pixverseApiKey = process.env.PIXVERSE_API_KEY || '';
-    this.appUrl = process.env.NEXT_PUBLIC_APP_URL || 'http://localhost:3000';
+    this.appUrl = baseUrl || process.env.NEXT_PUBLIC_APP_URL || 'http://localhost:3000';
   }
 
   async execute(input: InviteGenerationInput): Promise<AgentResult<InviteGenerationOutput>> {
