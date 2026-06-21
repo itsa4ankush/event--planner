@@ -52,13 +52,13 @@ export class InviteRsvpAgent extends BaseAgent {
       
       // Try PixVerse generation (with fallback)
       const assets = await this.generateInviteAssets(prompt, input.event);
-      
+
       // Generate QR code for RSVP
       const qrCodeUrl = await this.generateQRCode(input.event.id);
-      
+
       // Create default message if not provided
       const messageText = input.messageText || this.generateDefaultMessage(input.event);
-      
+
       // Create and store the invite
       const invite = db.invites.create({
         event_id: input.event.id,
@@ -137,10 +137,10 @@ export class InviteRsvpAgent extends BaseAgent {
 
     try {
       this.log(`Calling PixVerse API for image generation with prompt: ${prompt.substring(0, 100)}...`);
-      
+
       // Generate unique trace ID for this request
       const traceId = `${Date.now()}-${Math.random().toString(36).substring(7)}`;
-      
+
       // PixVerse API call for image generation (text-to-image)
       // Note: Using video endpoint but will extract first frame/thumbnail as image
       const imageResponse = await fetch('https://app-api.pixverse.ai/openapi/v2/video/text/generate', {
@@ -167,7 +167,7 @@ export class InviteRsvpAgent extends BaseAgent {
 
       const imageData = await imageResponse.json();
       this.log(`PixVerse response: ${JSON.stringify(imageData)}`);
-      
+
       // Check for error in response
       if (imageData.ErrCode && imageData.ErrCode !== 0) {
         throw new Error(`PixVerse error: ${imageData.ErrMsg}`);

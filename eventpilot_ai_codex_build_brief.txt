@@ -1,0 +1,394 @@
+================================================================
+EVENTPILOT AI — MVP BUILD BRIEF FOR AN AI CODING AGENT (e.g. Codex)
+================================================================
+Project: EventPilot AI — multi-agent event planning assistant
+Build window: ~11h15m of coding work, solo developer, hackathon submission
+Reference doc: eventpilot_ai_mvp_prd.md (full PRD — consult it for exact schema
+fields, agent design table, and tool integration details; this file turns
+that PRD into ordered, actionable build instructions.)
+
+----------------------------------------------------------------
+OVERALL OBJECTIVE
+----------------------------------------------------------------
+Build a working multi-agent event-planning MVP that demonstrates, in one
+unified dashboard:
+1. Conversational intake — by typed text AND live voice (Vapi speech-to-text)
+   — that asks the organizer relevant questions (event date, location, guest
+   count, theme/budget, etc.) and extracts a structured event brief.
+2. Vendor research and review-based ranking for at least one event category.
+3. A real, live outbound voice call (Vapi) to a phone number the organizer
+   enters on the spot — a pitch-demo mechanism, not a real vendor call.
+4. A generated, downloadable, shareable e-invite (image + ≤10s video, via
+   PixVerse) with a QR-coded RSVP page that captures guest responses.
+5. A cost/weather/legal panel (Cala + a weather API) giving a budget
+   estimate and superficial "things to consider" guidance.
+6. A purely visual, "Powered by Mollie"-branded mock checkout/payment screen.
+
+----------------------------------------------------------------
+GLOBAL RULES FOR THE CODING AGENT (apply to every phase)
+----------------------------------------------------------------
+- Optimize for "looks and works live in a demo" over architectural purity.
+  This is a hackathon MVP, not production software.
+- Every external API call (Vapi, PixVerse, Cala, weather) MUST have a
+  fallback/mocked response path so a slow or failed API never blocks the
+  demo flow. Build the fallback at the same time as the integration, not
+  as an afterthought.
+- DO NOT build real payment processing. The Payment/Order step is a static,
+  styled UI mock only. It must visually say "Powered by Mollie." No Mollie
+  SDK, API key, or network call of any kind.
+- DO NOT build real outbound email automation. Only the one live demo
+  phone call is real; all other vendor "outreach" is a logged, simulated
+  status string, clearly labeled as simulated in the UI.
+- The live demo call (Phase 7) is explicitly a PITCH-DEMO mechanism: the
+  organizer types in any phone number and Vapi calls it running a scripted
+  vendor-enquiry conversation. Never present this in the UI as contacting
+  an actual business — label it as a live capability demo.
+- Keep agent logic and API clients in separate, swappable modules
+  (e.g. /agents/*, /api_clients/*) so any single integration can be mocked
+  out independently without breaking the others.
+- Reuse the SAME extraction/question logic for both text and voice intake —
+  voice is just an alternate input channel feeding the same pipeline.
+
+----------------------------------------------------------------
+PHASE 1 — SETUP (30 min)
+----------------------------------------------------------------
+OBJECTIVE: A working dev environment with every external dependency verified.
+
+SCOPE — IN:
+- Obtain/verify API keys for Vapi, PixVerse, Cala.
+- Confirm a no-key weather API (e.g. Open-Meteo) is reachable.
+- Initialize project structure.
+
+SCOPE — OUT:
+- No business logic yet.
+
+TASKS:
+1. Create a config/env file holding VAPI_API_KEY, PIXVERSE_API_KEY,
+   CALA_API_KEY (and any others required).
+2. Write one smoke-test script per external API that makes a minimal
+   authenticated call and prints success or a clearly labeled
+   "unreachable — fallback required" message.
+3. Initialize repo structure:
+   /agents            (orchestrator, vendor_research, communication,
+                        invite_rsvp, cost_weather_legal, payment_mock)
+   /api_clients        (vapi_client, pixverse_client, cala_client,
+                        weather_client)
+   /models             (Event, Organizer, KpiCategory, Vendor, VendorQuote,
+                        Invite, Guest, WeatherLegalReport, Order)
+   /frontend           (dashboard, RSVP page, intake chat UI)
+   /mock_data          (seeded fallback datasets)
+
+ACCEPTANCE CRITERIA:
+- Each smoke test produces a clear pass/fail result. No silent failures.
+
+----------------------------------------------------------------
+PHASE 2 — APP SCAFFOLD (60 min)
+----------------------------------------------------------------
+OBJECTIVE: A minimal full-stack shell with core data models and a
+navigable (even if mostly empty) dashboard.
+
+SCOPE — IN:
+- Implement the data models below (see PRD Section 4 for full schema).
+- Build a dashboard shell with empty-state sections.
+- Build a public RSVP page route stub.
+
+SCOPE — OUT:
+- No agent logic yet, no real data — placeholder/empty states are fine.
+
+TASKS:
+1. Implement schema:
+   Organizer(id, name, email, phone, company)
+   Event(id, organizer_id, title, event_type, date, time, location_text,
+         lat, lng, guest_count, budget_total, status)
+   EventBriefAnswer(id, event_id, question_key, answer_value, input_mode)
+     -- input_mode is "voice" or "text"
+   KpiCategory(id, event_id, name, status)
+   Vendor(id, kpi_category_id, name, contact_email, contact_phone, source,
+          rating, review_count, price_estimate, available_date,
+          profile_url, status)
+   VendorQuote(id, vendor_id, channel, transcript_or_notes, quoted_price,
+               delivery_timeline, outcome)
+   Invite(id, event_id, image_url, video_url, qr_code_url, share_url,
+          message_text)
+   Guest(id, event_id, invite_id, name, contact, response, comments,
+         responded_at)
+   WeatherLegalReport(id, event_id, forecast_temp, forecast_condition,
+                       alt_date_suggestions, legal_notes,
+                       dress_code_recommendation)
+   Order(id, event_id, vendor_id, amount, payment_status, invoice_ref)
+2. Build dashboard shell with sections: Event Brief, KPI Categories,
+   Vendors, Invite Preview, RSVP List, Weather/Legal Panel, Order/Payment.
+3. Build the public RSVP page route (styling can be rough for now).
+
+ACCEPTANCE CRITERIA:
+- A dummy Event record can be created and appears on the dashboard.
+- The RSVP page loads at a shareable URL (even if empty).
+
+----------------------------------------------------------------
+PHASE 3 — ORCHESTRATOR / INTAKE AGENT, TEXT + VOICE (75 min)
+----------------------------------------------------------------
+OBJECTIVE: A conversational intake flow that extracts a structured event
+brief from either typed text or spoken voice, asking relevant follow-up
+questions until the brief is complete.
+
+SCOPE — IN:
+- Text chat interface: organizer types; agent asks clarifying follow-ups
+  one at a time (date, location, guest count, theme/tournament, budget)
+  until the brief is complete.
+- Voice mode: identical conversation, but input is captured via Vapi's
+  speech-to-text instead of typed text. The extraction logic must be
+  IDENTICAL for both modes — only the input channel changes.
+- A simple UI control to switch between "type" and "speak."
+
+SCOPE — OUT:
+- No outbound calling here — that is Phase 7. This phase is about
+  capturing INPUT, not about Vapi's calling feature.
+
+TASKS:
+1. Implement a question-loop: given the current (partial) EventBrief,
+   decide the next missing field to ask about. Given a free-text answer
+   (typed OR transcribed from voice), extract structured fields:
+   event_type, date, location, guest_count, theme, budget.
+2. Implement category inference: once the brief is sufficiently complete,
+   generate the relevant KpiCategory rows for the event_type (e.g.
+   food_drinks, decor, merch, photography).
+3. Wire Vapi speech-to-text into the chat UI as an alternate input control
+   (e.g. a "hold to speak" button) whose transcript feeds into the exact
+   same extraction logic from Task 1.
+4. Persist input_mode ("voice"/"text") per EventBriefAnswer row.
+
+ACCEPTANCE CRITERIA:
+- A full intake conversation can be completed using ONLY typed text, OR
+  ONLY voice, OR a mix — and produces the same structured EventBrief +
+  KpiCategory rows in every case.
+
+----------------------------------------------------------------
+PHASE 4 — VENDOR RESEARCH AGENT (90 min)
+----------------------------------------------------------------
+OBJECTIVE: A ranked, review-sorted vendor shortlist per KPI category.
+
+SCOPE — IN:
+- Web-search-backed (or seeded-fallback) vendor list per category.
+- Ranking primarily by review rating/count.
+- Organizer approve/reject controls per vendor.
+
+SCOPE — OUT:
+- No live vendor contact yet (Phase 7 covers the one demo call).
+
+TASKS:
+1. Build search query construction per category + location
+   (e.g. "catering near {location}", "{team} jersey merchandise").
+2. Parse/normalize results into Vendor rows: name, rating, review_count,
+   price_estimate, source, profile_url.
+3. Implement a reusable scoring/ranking function (default: rating desc,
+   then review_count desc) so weighting can be tuned later.
+4. Render the shortlist on the dashboard with Approve/Reject buttons per
+   vendor, updating Vendor.status.
+5. Prepare a static seeded fallback dataset (2-3 categories x 3 vendors
+   each) that can be swapped in instantly if live search is too slow or
+   unavailable during the demo.
+
+ACCEPTANCE CRITERIA:
+- At least one category renders a ranked list of 3+ vendors with working
+  approve/reject actions that persist.
+
+----------------------------------------------------------------
+PHASE 5 — COST / WEATHER / LEGAL INTELLIGENCE AGENT (60 min)
+----------------------------------------------------------------
+OBJECTIVE: A budget estimate + weather forecast + superficial legal/permit
+guidance panel.
+
+SCOPE — IN:
+- Cala query for cost-reference and permit/noise category facts,
+  presented strictly as "things to consider," never as legal advice.
+- Weather forecast for the event date/location.
+- Combined budget estimate (sum of vendor price_estimate + Cala cost refs).
+- Alt-date/dress-code suggestion if forecast is poor for an outdoor event.
+
+SCOPE — OUT:
+- No jurisdiction-specific legal accuracy guarantees. Keep all legal/permit
+  language clearly hedged.
+
+TASKS:
+1. Build a Cala query function returning structured cost/legal facts for
+   a given event_type/location.
+2. Build a weather lookup (e.g. Open-Meteo) for event date/location.
+3. Combine results into a WeatherLegalReport record; render as a dashboard
+   panel.
+4. Add conditional logic: outdoor event + adverse forecast => surface an
+   alt-date suggestion + dress-code/expectation note.
+5. Fallback: static seasonal-average text if Cala or the weather API is
+   unreachable.
+
+ACCEPTANCE CRITERIA:
+- Panel renders forecast temp/condition, a budget number, and at least 2
+  "consider this" guidance bullets, clearly labeled as informational only.
+
+----------------------------------------------------------------
+PHASE 6 — INVITE & RSVP AGENT, SHAREABLE (75 min)
+----------------------------------------------------------------
+OBJECTIVE: A generated image + ≤10s video invite that is downloadable and
+shareable, plus a working RSVP capture flow.
+
+SCOPE — IN:
+- PixVerse-generated image and video from event details.
+- Download buttons for both generated files.
+- A shareable link (copy-to-clipboard and/or native share) the organizer
+  can send directly to guests.
+- A QR code linking to the public RSVP page.
+- RSVP form: name, response (yes/no/maybe), contact, free-text comments
+  (dietary, +1s, etc.).
+
+SCOPE — OUT:
+- No guest-list import or bulk-invite sending. Distribution is manual —
+  the organizer shares the link/files themselves.
+
+TASKS:
+1. Call PixVerse with a prompt built from event theme/date/location; store
+   the resulting image_url and video_url on the Invite record.
+2. Add Download buttons (image, video) that trigger a browser file
+   download of the generated assets.
+3. Generate a share_url for the Invite (the public RSVP page URL) with a
+   "Copy link" button; use the Web Share API where supported.
+4. Generate a QR code encoding share_url, displayed next to the invite
+   preview.
+5. Build the RSVP form on the public page; submissions create Guest rows
+   linked to the Invite/Event.
+6. Render a live RSVP count/list on the dashboard.
+
+ACCEPTANCE CRITERIA:
+- The organizer can download the generated image/video as real files,
+  copy a shareable link, and a test RSVP submitted via that link appears
+  on the dashboard within seconds.
+
+----------------------------------------------------------------
+PHASE 7 — COMMUNICATION AGENT: LIVE DEMO CALL (45 min)
+----------------------------------------------------------------
+OBJECTIVE: A real, working Vapi outbound call to a phone number the
+organizer enters live, to demonstrate the voice-agent capability for the
+pitch.
+
+SCOPE — IN:
+- A dashboard control: "Enter a phone number to see EventPilot call a
+  vendor" -> input field + submit button.
+- On submit, Vapi places an outbound call to that number running a
+  scripted vendor-enquiry conversation (price/availability/delivery
+  timeline for a sample category).
+- Call outcome/transcript is logged to a VendorQuote-style record and
+  shown on the dashboard.
+
+SCOPE — OUT:
+- This is explicitly a demo/pitch mechanism, NOT a connection to a real
+  vendor. Do not present it in the UI as contacting an actual business.
+  Other (non-demoed) vendors keep their "simulated outreach" status — no
+  real calls are placed to them.
+
+TASKS:
+1. Build a Vapi assistant/script with a short vendor-enquiry persona
+   (e.g. "Hi, I'm calling on behalf of an event organizer to ask about
+   pricing and availability for {category} on {date}...").
+2. Build the "Enter phone number" UI control with basic validation.
+3. Trigger the Vapi outbound call via API on submit.
+4. Implement a webhook/callback handler that receives the call result
+   (transcript/summary) and writes it to the database.
+5. Render the call outcome (transcript snippet + any extracted quote
+   fields) on the dashboard.
+
+ACCEPTANCE CRITERIA:
+- Entering a real phone number and submitting results in an actual
+  incoming call within roughly 10-20 seconds, and the call outcome
+  appears on the dashboard afterward.
+
+----------------------------------------------------------------
+PHASE 8 — PAYMENT / ORDER MOCK, VISUAL ONLY (45 min)
+----------------------------------------------------------------
+OBJECTIVE: A purely visual, "Powered by Mollie"-branded checkout mock.
+No real payment processing of any kind.
+
+SCOPE — IN:
+- Static checkout UI summarizing approved vendor costs and total.
+- Mollie logo/wordmark and a clear "Powered by Mollie" label.
+- An Approve/Reject action per vendor that updates Vendor.status and
+  creates a mock Order record.
+
+SCOPE — OUT:
+- No real Mollie SDK/API integration. No real payment credentials. No
+  real transaction of any kind, test mode or otherwise.
+
+TASKS:
+1. Build a checkout-style component: vendor name, amount, Mollie
+   branding/logo, a "Pay with Mollie" styled button.
+2. On click, simulate a brief "processing..." state, then show a
+   "Payment Approved (mock)" confirmation. No network call to Mollie.
+3. Update Vendor.status (approved/rejected) and create an Order row with
+   payment_status = mock_paid / mock_pending.
+4. Render order status on the dashboard.
+
+ACCEPTANCE CRITERIA:
+- Clicking through the mock checkout visibly updates vendor/order status
+  on the dashboard, and the UI clearly displays Mollie branding while no
+  real payment call occurs anywhere in the code path.
+
+----------------------------------------------------------------
+PHASE 9 — INTEGRATION + DEBUGGING (75 min)
+----------------------------------------------------------------
+OBJECTIVE: The full happy path runs end-to-end without manual console
+intervention.
+
+TASKS:
+1. Run the entire flow once, start to finish: intake (voice + text) ->
+   vendor shortlist -> live demo call -> invite/RSVP -> weather/legal
+   panel -> mock payment -> dashboard.
+2. Fix any broken data handoffs between agents/tables.
+3. Deliberately disable/throttle one external API at a time to confirm
+   each fallback path actually triggers correctly.
+
+ACCEPTANCE CRITERIA:
+- A single run-through, with no manual data editing, produces a fully
+  populated dashboard.
+
+----------------------------------------------------------------
+PHASE 10 — POLISH + DEMO DATA (60 min)
+----------------------------------------------------------------
+OBJECTIVE: A demo that looks intentional, not half-built.
+
+TASKS:
+1. Seed one polished example scenario (e.g. the FIFA World Cup watch-party
+   use case) end-to-end.
+2. Tidy up empty/loading states across the dashboard.
+3. Apply basic, consistent styling.
+4. Write a 60-90 second spoken demo script that hits every required
+   capability in order.
+
+ACCEPTANCE CRITERIA:
+- A stranger could follow the demo flow without narration filling gaps.
+
+----------------------------------------------------------------
+PHASE 11 — BUFFER (60 min)
+----------------------------------------------------------------
+OBJECTIVE: Absorb overruns from the highest-risk phases (4 and 7) without
+blowing the schedule.
+
+TASKS:
+- Triage and fix whatever is most broken from earlier phases.
+- Do not start new scope here — this time exists only to finish Phases
+  1-10 properly.
+
+----------------------------------------------------------------
+AFTER CODING WRAPS — HUMAN-ONLY STEPS (not for the coding agent)
+----------------------------------------------------------------
+These happen after Phase 11 and are part of the hackathon execution
+timeline (see PRD Section 9), not coding tasks:
+- Record a backup demo video of one full successful run-through, in case
+  live APIs misbehave during judging (~60 min).
+- Final check + write submission text + submit (~30 min).
+
+----------------------------------------------------------------
+QUICK REFERENCE — RISK ORDER (highest first)
+----------------------------------------------------------------
+1. Vendor Research Agent (Phase 4) — depends on web search quality/speed.
+2. Communication Agent live demo call (Phase 7) — real telephony, but
+   lower risk than originally scoped since both ends of the call are
+   under your control.
+3. Invite & RSVP Agent generation (Phase 6) — PixVerse generation latency.
+4. Everything else is largely deterministic CRUD + UI work.

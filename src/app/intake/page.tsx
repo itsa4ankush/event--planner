@@ -1,12 +1,8 @@
-/**
- * EventPilot AI - Event Intake Page
- * Phase 3: Conversational intake with text + voice toggle
- */
-
 'use client';
 
 import { useState, useRef, useEffect } from 'react';
 import { useRouter } from 'next/navigation';
+import Link from 'next/link';
 
 interface Message {
   role: 'user' | 'assistant';
@@ -19,228 +15,224 @@ export default function IntakePage() {
   const [messages, setMessages] = useState<Message[]>([
     {
       role: 'assistant',
-      content: "Hi! I'm EventPilot AI. I'll help you plan your event. Tell me about what you're planning, or I can ask you some questions to get started.",
+      content: "Hi! I'm Anthea, your AI event planner. Tell me about the event you're planning — what, where, when, and how many guests — and I'll take care of the rest.",
     },
   ]);
-  const [input, setInput] = useState('');
+  const [input, setInput]         = useState('');
   const [inputMode, setInputMode] = useState<'text' | 'voice'>('text');
-  const [isRecording, setIsRecording] = useState(false);
+  const [isRecording, setIsRecording]   = useState(false);
   const [isProcessing, setIsProcessing] = useState(false);
-  const [eventId, setEventId] = useState<string | undefined>();
+  const [eventId, setEventId]     = useState<string | undefined>();
+  const [isComplete, setIsComplete] = useState(false);
   const messagesEndRef = useRef<HTMLDivElement>(null);
+  const inputRef       = useRef<HTMLInputElement>(null);
 
-  const scrollToBottom = () => {
-    messagesEndRef.current?.scrollIntoView({ behavior: 'smooth' });
-  };
+  useEffect(() => { messagesEndRef.current?.scrollIntoView({ behavior: 'smooth' }); }, [messages]);
 
+  // Return focus to input after every AI response
   useEffect(() => {
-    scrollToBottom();
-  }, [messages]);
+    if (!isProcessing && !isComplete && inputMode === 'text') {
+      inputRef.current?.focus();
+    }
+  }, [isProcessing]);
 
-  const handleSubmit = async (e: React.FormEvent) => {
-    e.preventDefault();
-    if (!input.trim() || isProcessing) return;
-
-    const userMessage = input.trim();
-    setInput('');
+  const submitMessage = async (userMessage: string, mode: 'text' | 'voice') => {
     setIsProcessing(true);
-
-    // Add user message
-    setMessages(prev => [...prev, { role: 'user', content: userMessage, inputMode }]);
-
+    setMessages(prev => [...prev, { role: 'user', content: userMessage, inputMode: mode }]);
     try {
-      // Call the orchestrator agent
-      const response = await fetch('/api/intake', {
+      const res = await fetch('/api/intake', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          message: userMessage,
-          inputMode,
-          eventId,
-          organizerId: 'demo-organizer-1', // TODO: Get from auth
-        }),
+        body: JSON.stringify({ message: userMessage, inputMode: mode, eventId, organizerId: 'demo-organizer-1' }),
       });
-
-      const result = await response.json();
-
+      const result = await res.json();
       if (result.success) {
-        // Add assistant response
         setMessages(prev => [...prev, { role: 'assistant', content: result.data.response }]);
-
-        // Update event ID if created
-        if (result.data.eventId) {
-          setEventId(result.data.eventId);
-        }
-
-        // If complete, redirect to dashboard
+        if (result.data.eventId) setEventId(result.data.eventId);
         if (result.data.isComplete && result.data.eventId) {
-          setTimeout(() => {
-            router.push(`/dashboard?eventId=${result.data.eventId}`);
-          }, 2000);
+          setIsComplete(true);
+          setTimeout(() => router.push(`/dashboard?eventId=${result.data.eventId}`), 1800);
         }
       } else {
-        setMessages(prev => [
-          ...prev,
-          { role: 'assistant', content: 'Sorry, I encountered an error. Please try again.' },
-        ]);
+        setMessages(prev => [...prev, { role: 'assistant', content: 'Something went wrong. Please try again.' }]);
       }
-    } catch (error) {
-      console.error('Intake error:', error);
-      setMessages(prev => [
-        ...prev,
-        { role: 'assistant', content: 'Sorry, something went wrong. Please try again.' },
-      ]);
+    } catch {
+      setMessages(prev => [...prev, { role: 'assistant', content: 'Connection error. Please try again.' }]);
     } finally {
       setIsProcessing(false);
     }
   };
 
-  const handleVoiceToggle = () => {
-    if (inputMode === 'text') {
-      setInputMode('voice');
-      startRecording();
-    } else {
-      setInputMode('text');
-      stopRecording();
-    }
+  const handleSubmit = async (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!input.trim() || isProcessing) return;
+    const msg = input.trim();
+    setInput('');
+    await submitMessage(msg, 'text');
   };
 
-  const startRecording = async () => {
-    try {
-      // TODO: Integrate Vapi speech-to-text
-      setIsRecording(true);
-      alert('Voice recording will be integrated with Vapi in the next step. For now, please use text input.');
+  const startRecording = () => {
+    const SR = (window as any).SpeechRecognition || (window as any).webkitSpeechRecognition;
+    if (!SR) {
+      setMessages(prev => [...prev, { role: 'assistant', content: 'Voice input requires Chrome or Edge. Please use text mode.' }]);
       setInputMode('text');
-      setIsRecording(false);
-    } catch (error) {
-      console.error('Recording error:', error);
-      setInputMode('text');
-      setIsRecording(false);
+      return;
     }
-  };
-
-  const stopRecording = () => {
-    setIsRecording(false);
+    const recognition = new SR();
+    recognition.lang = 'en-US';
+    recognition.continuous = false;
+    recognition.interimResults = false;
+    recognition.onstart  = () => setIsRecording(true);
+    recognition.onresult = (e: any) => { setIsRecording(false); submitMessage(e.results[0][0].transcript, 'voice'); };
+    recognition.onerror  = () => setIsRecording(false);
+    recognition.onend    = () => setIsRecording(false);
+    recognition.start();
   };
 
   return (
-    <div className="min-h-screen bg-[#0a0a0a]">
-      {/* Header */}
-      <header className="bg-[#1a1a1a] border-b border-[#2a2a2a]">
-        <div className="max-w-5xl mx-auto px-6 py-4">
-          <div className="flex items-center justify-between">
-            <div>
-              <h1 className="text-2xl font-bold bg-gradient-to-r from-purple-400 to-pink-400 bg-clip-text text-transparent">
-                Anthea
-              </h1>
-              <p className="text-sm text-gray-400">AI Event Planning Assistant</p>
+    <div className="min-h-screen flex flex-col" style={{ background: '#F8FAFC', fontFamily: "'Inter', system-ui, -apple-system, sans-serif" }}>
+
+      {/* ── Header ── */}
+      <header className="shrink-0 bg-white sticky top-0 z-40" style={{ borderBottom: '1px solid #E5E7EB', height: '64px' }}>
+        <div className="max-w-[1100px] mx-auto px-8 h-full flex items-center justify-between">
+          <Link href="/" className="flex items-center gap-2">
+            <div className="w-8 h-8 rounded-xl flex items-center justify-center shrink-0" style={{ background: 'linear-gradient(135deg, #7C3AED, #A855F7)' }}>
+              <svg width="14" height="14" viewBox="0 0 24 24" fill="white"><path d="M12 2L9.19 9.19 2 12l7.19 2.81L12 22l2.81-7.19L22 12l-7.19-2.81L12 2z" /></svg>
             </div>
-            <div className="flex items-center gap-3">
-              <span className="text-sm text-gray-400">Input:</span>
-              <button
-                onClick={handleVoiceToggle}
-                className={`px-4 py-2 rounded-lg text-sm font-medium transition ${
-                  inputMode === 'voice'
-                    ? 'bg-gradient-to-r from-purple-600 to-pink-600 text-white'
-                    : 'bg-[#2a2a2a] text-gray-300 hover:bg-[#3a3a3a]'
-                }`}
-              >
-                {inputMode === 'voice' ? '🎤 Voice' : '⌨️ Text'}
-              </button>
-            </div>
-          </div>
+            <span className="font-bold text-gray-900 text-[17px] tracking-tight">Anthea</span>
+          </Link>
+          <button
+            onClick={() => setInputMode(m => m === 'text' ? 'voice' : 'text')}
+            className={`flex items-center gap-2 px-3 py-1.5 rounded-lg text-xs font-medium border transition-all duration-200 ${
+              inputMode === 'voice'
+                ? 'bg-violet-50 border-violet-300 text-violet-700'
+                : 'bg-white border-gray-200 text-gray-500 hover:border-gray-300'
+            }`}
+          >
+            {inputMode === 'voice'
+              ? <><span className="w-1.5 h-1.5 rounded-full bg-violet-500 animate-blink" /> Voice</>
+              : <><span className="text-base leading-none">⌨️</span> Text</>
+            }
+          </button>
         </div>
       </header>
 
-      {/* Chat Container */}
-      <main className="max-w-5xl mx-auto px-6 py-8">
-        <div className="bg-[#1a1a1a] border border-[#2a2a2a] rounded-2xl overflow-hidden" style={{ height: 'calc(100vh - 180px)' }}>
-          {/* Messages */}
-          <div className="h-full flex flex-col">
-            <div className="flex-1 overflow-y-auto p-6 space-y-4">
-              {messages.map((message, index) => (
-                <div
-                  key={index}
-                  className={`flex ${message.role === 'user' ? 'justify-end' : 'justify-start'}`}
-                >
-                  <div
-                    className={`max-w-[80%] rounded-2xl px-4 py-3 ${
-                        message.role === 'user'
-                          ? 'bg-gradient-to-r from-purple-600 to-pink-600 text-white'
-                          : 'bg-[#2a2a2a] text-gray-100'
-                      }`}
-                  >
-                    <p className="text-sm whitespace-pre-wrap">{message.content}</p>
-                    {message.inputMode && message.role === 'user' && (
-                      <span className="text-xs opacity-75 mt-1 block">
-                        {message.inputMode === 'voice' ? '🎤 Voice' : '⌨️ Text'}
-                      </span>
-                    )}
-                  </div>
-                </div>
-              ))}
-              {isProcessing && (
-                <div className="flex justify-start">
-                  <div className="bg-[#2a2a2a] rounded-2xl px-4 py-3">
-                    <div className="flex items-center gap-2">
-                      <div className="w-2 h-2 bg-purple-400 rounded-full animate-bounce" style={{ animationDelay: '0ms' }}></div>
-                      <div className="w-2 h-2 bg-purple-400 rounded-full animate-bounce" style={{ animationDelay: '150ms' }}></div>
-                      <div className="w-2 h-2 bg-purple-400 rounded-full animate-bounce" style={{ animationDelay: '300ms' }}></div>
-                    </div>
-                  </div>
+      {/* ── Messages ── */}
+      <div className="flex-1 overflow-y-auto">
+        <div className="max-w-[700px] mx-auto px-6 py-8 space-y-5">
+          {messages.map((msg, i) => (
+            <div
+              key={i}
+              className={`flex gap-3 animate-fade-up ${msg.role === 'user' ? 'justify-end' : 'justify-start'}`}
+            >
+              {msg.role === 'assistant' && (
+                <div className="shrink-0 w-8 h-8 rounded-xl bg-violet-50 border border-violet-200 flex items-center justify-center text-sm mt-0.5">
+                  ✦
                 </div>
               )}
-              <div ref={messagesEndRef} />
-            </div>
-
-            {/* Input Form */}
-            <div className="border-t border-[#2a2a2a] p-4 bg-[#1a1a1a]">
-              <form onSubmit={handleSubmit} className="flex gap-3">
-                {inputMode === 'text' ? (
-                  <>
-                    <input
-                      type="text"
-                      value={input}
-                      onChange={(e) => setInput(e.target.value)}
-                      placeholder="Describe your event..."
-                      disabled={isProcessing}
-                      className="flex-1 px-4 py-3 bg-[#2a2a2a] border border-[#3a3a3a] rounded-xl text-gray-100 placeholder-gray-500 focus:ring-2 focus:ring-purple-500 focus:border-transparent disabled:opacity-50 transition"
-                    />
-                    <button
-                      type="submit"
-                      disabled={!input.trim() || isProcessing}
-                      className="px-6 py-3 bg-gradient-to-r from-purple-600 to-pink-600 text-white rounded-xl hover:from-purple-700 hover:to-pink-700 transition disabled:opacity-50 disabled:cursor-not-allowed font-medium"
-                    >
-                      Send
-                    </button>
-                  </>
-                ) : (
-                  <div className="flex-1 flex items-center justify-center">
-                    <button
-                      type="button"
-                      onClick={stopRecording}
-                      className={`px-8 py-4 rounded-xl font-medium transition ${
-                        isRecording
-                          ? 'bg-red-600 text-white animate-pulse'
-                          : 'bg-gradient-to-r from-purple-600 to-pink-600 text-white hover:from-purple-700 hover:to-pink-700'
-                      }`}
-                    >
-                      {isRecording ? '🔴 Recording... (Tap to stop)' : '🎤 Hold to speak'}
-                    </button>
-                  </div>
+              <div
+                className={`max-w-[78%] rounded-2xl px-4 py-3 text-sm leading-relaxed ${
+                  msg.role === 'user'
+                    ? 'bg-violet-600 text-white rounded-br-sm shadow-sm shadow-violet-200'
+                    : 'bg-white border border-gray-200 text-gray-700 rounded-bl-sm card-shadow'
+                }`}
+              >
+                {msg.content}
+                {msg.inputMode === 'voice' && msg.role === 'user' && (
+                  <span className="block text-[10px] opacity-70 mt-1">🎤 voice</span>
                 )}
-              </form>
-              <p className="text-xs text-gray-500 mt-2 text-center">
-                {inputMode === 'voice'
-                  ? 'Voice mode powered by Vapi (coming soon - use text for now)'
-                  : 'Press Enter to send, or switch to voice mode'}
-              </p>
+              </div>
             </div>
-          </div>
+          ))}
+
+          {isProcessing && (
+            <div className="flex gap-3 justify-start animate-fade-in">
+              <div className="shrink-0 w-8 h-8 rounded-xl bg-violet-50 border border-violet-200 flex items-center justify-center text-sm">
+                ✦
+              </div>
+              <div className="bg-white border border-gray-200 rounded-2xl rounded-bl-sm px-4 py-3 flex items-center gap-1.5 card-shadow">
+                {[0, 150, 300].map(d => (
+                  <span
+                    key={d}
+                    className="w-1.5 h-1.5 rounded-full bg-violet-400"
+                    style={{ animation: `blink 1.2s ease-in-out ${d}ms infinite` }}
+                  />
+                ))}
+              </div>
+            </div>
+          )}
+
+          {isComplete && (
+            <div className="flex justify-center animate-scale-in">
+              <div className="flex items-center gap-2 px-4 py-2 rounded-full bg-emerald-50 border border-emerald-200 text-emerald-700 text-sm font-medium">
+                <svg className="w-4 h-4" fill="none" stroke="currentColor" strokeWidth={2.5} viewBox="0 0 24 24">
+                  <path strokeLinecap="round" strokeLinejoin="round" d="M5 13l4 4L19 7" />
+                </svg>
+                Event created — heading to dashboard…
+              </div>
+            </div>
+          )}
+
+          <div ref={messagesEndRef} />
         </div>
-      </main>
+      </div>
+
+      {/* ── Input bar — floating centered card ── */}
+      <div className="shrink-0 pt-2 pb-6">
+        <div className="max-w-[700px] mx-auto px-6">
+          {inputMode === 'text' ? (
+            <form onSubmit={handleSubmit}>
+              <div
+                className="flex items-center gap-2 p-2 rounded-2xl"
+                style={{
+                  background: '#FFFFFF',
+                  border: '1px solid #E5E7EB',
+                  boxShadow: '0 4px 24px rgba(0,0,0,0.08), 0 1px 4px rgba(0,0,0,0.04)',
+                }}
+              >
+                <input
+                  ref={inputRef}
+                  type="text"
+                  value={input}
+                  onChange={e => setInput(e.target.value)}
+                  placeholder="Describe your event…"
+                  disabled={isProcessing || isComplete}
+                  autoFocus
+                  className="flex-1 px-4 py-2.5 bg-transparent text-sm text-gray-900 placeholder-gray-400 disabled:opacity-40 focus:outline-none"
+                  style={{ border: 'none' }}
+                />
+                <button
+                  type="submit"
+                  disabled={!input.trim() || isProcessing || isComplete}
+                  className="shrink-0 px-5 py-2.5 rounded-xl text-white text-sm font-semibold transition-colors disabled:opacity-40"
+                  style={{ background: 'linear-gradient(135deg, #7C3AED, #A855F7)' }}
+                >
+                  Send
+                </button>
+              </div>
+            </form>
+          ) : (
+            <div className="flex items-center justify-center py-2">
+              <button
+                onClick={isRecording ? undefined : startRecording}
+                disabled={isProcessing || isComplete}
+                className={`flex items-center gap-2.5 px-7 py-3 rounded-xl font-semibold text-sm transition-all duration-200 ${
+                  isRecording
+                    ? 'bg-red-50 border-2 border-red-300 text-red-600 animate-pulse-ring'
+                    : 'text-white shadow-sm shadow-violet-200'
+                }`}
+                style={!isRecording ? { background: 'linear-gradient(135deg, #7C3AED, #A855F7)' } : {}}
+              >
+                <span className={`w-2 h-2 rounded-full ${isRecording ? 'bg-red-500 animate-blink' : 'bg-white'}`} />
+                {isRecording ? 'Listening…' : 'Tap to speak'}
+              </button>
+            </div>
+          )}
+          <p className="text-center text-[11px] mt-3" style={{ color: '#9CA3AF' }}>
+            {inputMode === 'voice' ? 'Voice via Web Speech API · Chrome/Edge' : 'Press Enter to send · toggle 🎤 for voice'}
+          </p>
+        </div>
+      </div>
     </div>
   );
 }
-
-// Made with Bob

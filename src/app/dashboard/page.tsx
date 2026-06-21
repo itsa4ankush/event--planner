@@ -1,855 +1,684 @@
-/**
- * EventPilot AI - Main Dashboard
- * Phase 2: Unified event planning dashboard
- */
-
 'use client';
 
-import { useState, useEffect } from 'react';
+import { useState, useEffect, useRef, Suspense } from 'react';
 import { useSearchParams, useRouter } from 'next/navigation';
+import Link from 'next/link';
 import { Event, KpiCategory, Vendor, Guest, WeatherLegalReport, Order, Invite, VendorQuote } from '@/lib/db/schema';
 
+/* ─── Light-theme palette ─────────────────────────── */
+const card = {
+  background: '#FFFFFF',
+  border: '1px solid #E5E7EB',
+  borderRadius: '12px',
+  boxShadow: '0 1px 3px rgba(0,0,0,0.08), 0 1px 2px rgba(0,0,0,0.04)',
+} as const;
+const bg      = '#F8FAFC';
+const preview = '#F9FAFB';
+const div1    = '1px solid #E5E7EB';
+const div2    = '1px solid #F3F4F6';
+
+/* ─── Status badge Tailwind classes (light theme) ─── */
+const KPI_BADGE: Record<string, string> = {
+  not_started: 'bg-gray-100 text-gray-500 border border-gray-200',
+  searching:   'bg-blue-50 text-blue-700 border border-blue-200 animate-pulse',
+  shortlisted: 'bg-amber-50 text-amber-700 border border-amber-200',
+  approved:    'bg-emerald-50 text-emerald-700 border border-emerald-200',
+  ordered:     'bg-violet-50 text-violet-700 border border-violet-200',
+};
+const KPI_LABEL: Record<string, string> = {
+  not_started: 'Not Started', searching: 'Searching…',
+  shortlisted: 'Shortlisted', approved: 'Approved', ordered: 'Ordered',
+};
+const VENDOR_BADGE: Record<string, string> = {
+  shortlisted: 'bg-amber-50 text-amber-700 border border-amber-200',
+  contacted:   'bg-blue-50 text-blue-700 border border-blue-200',
+  quoted:      'bg-violet-50 text-violet-700 border border-violet-200',
+  approved:    'bg-emerald-50 text-emerald-700 border border-emerald-200',
+  rejected:    'bg-red-50 text-red-700 border border-red-200',
+};
+const CAT_ICON: Record<string, string> = {
+  venue: '🏛️', food_drinks: '🍽️', decor: '✨', photography: '📸',
+  merch: '👕', entertainment: '🎵', av_equipment: '📺',
+};
+
+/* ═══════════════════ PAGE EXPORT ═══════════════════ */
 export default function DashboardPage() {
+  return (
+    <Suspense fallback={<FullPageSpinner />}>
+      <DashboardContent />
+    </Suspense>
+  );
+}
+
+function FullPageSpinner() {
+  return (
+    <div className="min-h-screen flex items-center justify-center" style={{ background: bg }}>
+      <div className="flex flex-col items-center gap-3">
+        <div className="w-7 h-7 rounded-full border-2 border-violet-500 border-t-transparent animate-spin-slow" />
+        <p className="text-xs text-gray-400">Loading dashboard…</p>
+      </div>
+    </div>
+  );
+}
+
+/* ═══════════════════ DASHBOARD ═══════════════════ */
+function DashboardContent() {
   const searchParams = useSearchParams();
-  const router = useRouter();
-  const eventId = searchParams.get('eventId');
+  const router       = useRouter();
+  const eventId      = searchParams.get('eventId');
 
-  const [event, setEvent] = useState<Event | null>(null);
-  const [categories, setCategories] = useState<KpiCategory[]>([]);
-  const [vendors, setVendors] = useState<Vendor[]>([]);
-  const [guests, setGuests] = useState<Guest[]>([]);
+  const [event,         setEvent]         = useState<Event | null>(null);
+  const [categories,    setCategories]    = useState<KpiCategory[]>([]);
+  const [vendors,       setVendors]       = useState<Vendor[]>([]);
+  const [guests,        setGuests]        = useState<Guest[]>([]);
   const [weatherReport, setWeatherReport] = useState<WeatherLegalReport | null>(null);
-  const [orders, setOrders] = useState<Order[]>([]);
-  const [loading, setLoading] = useState(true);
-  const [searchingVendors, setSearchingVendors] = useState(false);
-  const [generatingReport, setGeneratingReport] = useState(false);
-  const [generatingInvite, setGeneratingInvite] = useState(false);
+  const [orders,        setOrders]        = useState<Order[]>([]);
+  const [invite,        setInvite]        = useState<Invite | null>(null);
   const [costBreakdown, setCostBreakdown] = useState<any>(null);
-  const [invite, setInvite] = useState<Invite | null>(null);
-  const [callingVendor, setCallingVendor] = useState<string | null>(null);
-  const [callResult, setCallResult] = useState<VendorQuote | null>(null);
-  const [showCallModal, setShowCallModal] = useState(false);
-  const [processingPayment, setProcessingPayment] = useState(false);
-  const [showPaymentModal, setShowPaymentModal] = useState(false);
 
-  useEffect(() => {
-    if (eventId) {
-      loadEventData(eventId);
-    } else {
-      setLoading(false);
-    }
-  }, [eventId]);
+  const [loading,           setLoading]           = useState(true);
+  const [searchingVendors,  setSearchingVendors]  = useState(false);
+  const [generatingReport,  setGeneratingReport]  = useState(false);
+  const [generatingInvite,  setGeneratingInvite]  = useState(false);
+  const [callingVendor,     setCallingVendor]     = useState<string | null>(null);
+  const [vendorQuote,       setVendorQuote]       = useState<VendorQuote | null>(null);
+  const [processingPayment, setProcessingPayment] = useState(false);
+  const [paymentDone,       setPaymentDone]       = useState(false);
+
+  const [demoPhone,     setDemoPhone]     = useState('+31 6 12345678');
+  const [isDemoCalling, setIsDemoCalling] = useState(false);
+  const [callLog,       setCallLog]       = useState<string[]>([]);
+  const tickerRef = useRef<HTMLDivElement | null>(null);
+
+  useEffect(() => { if (eventId) loadEventData(eventId); else setLoading(false); }, [eventId]);
+  useEffect(() => { if (tickerRef.current) tickerRef.current.scrollTop = tickerRef.current.scrollHeight; }, [callLog]);
 
   const loadEventData = async (id: string) => {
     try {
-      const response = await fetch(`/api/events/${id}`);
-      const result = await response.json();
-
-      if (result.success) {
-        setEvent(result.data.event);
-        setCategories(result.data.categories);
-        setVendors(result.data.vendors);
-        setGuests(result.data.guests);
-        setWeatherReport(result.data.weatherReport);
-        setOrders(result.data.orders);
-        if (result.data.invites && result.data.invites.length > 0) {
-          setInvite(result.data.invites[0]);
-        }
+      const r = await fetch(`/api/events/${id}`);
+      const d = await r.json();
+      if (d.success) {
+        setEvent(d.data.event);  setCategories(d.data.categories);
+        setVendors(d.data.vendors); setGuests(d.data.guests);
+        setWeatherReport(d.data.weatherReport ?? null); setOrders(d.data.orders);
+        if (d.data.invite) setInvite(d.data.invite);
       }
-    } catch (error) {
-      console.error('Failed to load event data:', error);
-    } finally {
-      setLoading(false);
-    }
+    } catch { /* silent */ }
+    finally { setLoading(false); }
   };
 
   const handleFindVendors = async () => {
-    if (!eventId) return;
-
-    setSearchingVendors(true);
+    if (!eventId) return; setSearchingVendors(true);
     try {
-      const response = await fetch('/api/vendors/search', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ eventId }),
-      });
-
-      const result = await response.json();
-      if (result.success) {
-        // Reload event data to get new vendors
-        await loadEventData(eventId);
-      }
-    } catch (error) {
-      console.error('Vendor search failed:', error);
-    } finally {
-      setSearchingVendors(false);
-    }
+      const r = await fetch('/api/vendors/search', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ eventId }) });
+      if ((await r.json()).success) await loadEventData(eventId);
+    } finally { setSearchingVendors(false); }
   };
-
   const handleVendorAction = async (vendorId: string, status: 'approved' | 'rejected') => {
-    try {
-      const response = await fetch(`/api/vendors/${vendorId}`, {
-        method: 'PATCH',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ status }),
-      });
-
-      if (response.ok && eventId) {
-        await loadEventData(eventId);
-      }
-    } catch (error) {
-      console.error('Vendor action failed:', error);
-    }
+    await fetch(`/api/vendors/${vendorId}`, { method: 'PATCH', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ status }) });
+    if (eventId) await loadEventData(eventId);
   };
-
-  const handleGenerateReport = async () => {
-    if (!eventId) return;
-
-    setGeneratingReport(true);
-    try {
-      const response = await fetch('/api/intelligence', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ eventId }),
-      });
-
-      const result = await response.json();
-      if (result.success) {
-        setWeatherReport(result.report);
-        setCostBreakdown(result.costBreakdown);
-        // Reload to get updated data
-        await loadEventData(eventId);
-      }
-    } catch (error) {
-      console.error('Report generation failed:', error);
-    } finally {
-      setGeneratingReport(false);
-    }
-  };
-
-  const handleGenerateInvite = async () => {
-    if (!eventId) return;
-
-    setGeneratingInvite(true);
-    try {
-      const response = await fetch('/api/invites/generate', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          eventId,
-          style: 'modern'
-        }),
-      });
-
-      const result = await response.json();
-      if (result.success) {
-        setInvite(result.invite);
-        await loadEventData(eventId);
-      }
-    } catch (error) {
-      console.error('Invite generation failed:', error);
-    } finally {
-      setGeneratingInvite(false);
-    }
-  };
-
   const handleCallVendor = async (vendorId: string) => {
-    if (!eventId) return;
-
-    setCallingVendor(vendorId);
-    setShowCallModal(true);
-    setCallResult(null);
-
+    if (!eventId) return; setCallingVendor(vendorId); setVendorQuote(null);
     try {
-      const response = await fetch(`/api/vendors/${vendorId}/call`, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          eventId,
-          mode: 'demo' // Use demo mode for hackathon
-        }),
-      });
-
-      const result = await response.json();
-      if (result.success) {
-        setCallResult(result.quote);
-        await loadEventData(eventId);
-      }
-    } catch (error) {
-      console.error('Vendor call failed:', error);
-    } finally {
-      setCallingVendor(null);
-    }
+      const r = await fetch(`/api/vendors/${vendorId}/call`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ eventId, mode: 'demo' }) });
+      const d = await r.json();
+      if (d.success) { setVendorQuote(d.quote); await loadEventData(eventId); }
+    } finally { setCallingVendor(null); }
   };
-
+  const handleDemoCall = async () => {
+    if (!demoPhone.trim() || !eventId) return;
+    setIsDemoCalling(true);
+    setCallLog(['[SYSTEM]: Initializing Vapi Agent Outbound Protocol…', `[VAPI]: Connecting to ${demoPhone}…`]);
+    try {
+      const r = await fetch('/api/demo-call', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ phoneNumber: demoPhone, eventId }) });
+      const d = await r.json();
+      if (d.success) {
+        const lines = (d.transcript as string).split('\n').filter(Boolean).map((l: string) => `[VAPI]: ${l}`);
+        setCallLog(prev => [...prev, ...lines, `[SYSTEM]: Call complete. Duration: ${d.duration}s.`]);
+      }
+    } finally { setIsDemoCalling(false); }
+  };
+  const handleGenerateReport = async () => {
+    if (!eventId) return; setGeneratingReport(true);
+    try {
+      const r = await fetch('/api/intelligence', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ eventId }) });
+      const d = await r.json();
+      if (d.success) { setWeatherReport(d.report); setCostBreakdown(d.costBreakdown); }
+    } finally { setGeneratingReport(false); }
+  };
+  const handleGenerateInvite = async () => {
+    if (!eventId) return; setGeneratingInvite(true);
+    try {
+      const r = await fetch('/api/invites/generate', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ eventId, style: 'modern' }) });
+      const d = await r.json();
+      if (d.success) setInvite(d.invite);
+    } finally { setGeneratingInvite(false); }
+  };
   const handleCreateOrders = async () => {
-    if (!eventId) return;
-
-    setProcessingPayment(true);
-    setShowPaymentModal(true);
-
+    if (!eventId) return; setProcessingPayment(true);
     try {
-      const response = await fetch('/api/orders/create', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          eventId,
-          paymentMethod: 'ideal'
-        }),
-      });
-
-      const result = await response.json();
-      if (result.success) {
-        await loadEventData(eventId);
-      }
-    } catch (error) {
-      console.error('Order creation failed:', error);
-    } finally {
-      setProcessingPayment(false);
-    }
+      const r = await fetch('/api/orders/create', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ eventId, paymentMethod: 'ideal' }) });
+      if ((await r.json()).success) { await loadEventData(eventId); setPaymentDone(true); }
+    } finally { setProcessingPayment(false); }
   };
 
-  if (loading) {
-    return (
-      <div className="min-h-screen bg-gray-50 flex items-center justify-center">
-        <div className="text-center">
-          <div className="animate-spin rounded-full h-12 w-12 border-b-2 border-blue-600 mx-auto"></div>
-          <p className="mt-4 text-gray-600">Loading dashboard...</p>
-        </div>
-      </div>
-    );
-  }
+  if (loading) return <FullPageSpinner />;
+
+  const approvedVendors = vendors.filter(v => v.status === 'approved');
+  const subtotal        = approvedVendors.reduce((s, v) => s + (v.price_estimate || 0), 0);
+  const orderTotal      = orders.reduce((s, o) => s + o.amount, 0);
 
   return (
-    <div className="min-h-screen bg-[#0a0a0a]">
-      {/* Header */}
-      <header className="bg-[#1a1a1a] border-b border-[#2a2a2a]">
-        <div className="max-w-7xl mx-auto px-6 py-4">
-          <div className="flex items-center justify-between">
-            <div>
-              <h1 className="text-2xl font-bold bg-gradient-to-r from-purple-400 to-pink-400 bg-clip-text text-transparent">
-                Anthea
-              </h1>
-              <p className="text-sm text-gray-400">AI Event Planning Dashboard</p>
+    <div className="min-h-screen" style={{ background: bg, fontFamily: "'Inter', system-ui, -apple-system, sans-serif" }}>
+
+      {/* ════ NAV ════ */}
+      <nav className="bg-white sticky top-0 z-40" style={{ borderBottom: '1px solid #E5E7EB', height: '64px' }}>
+        <div className="max-w-[1100px] mx-auto px-8 h-full flex items-center justify-between">
+          <div className="flex items-center gap-3">
+            <Link href="/" className="flex items-center gap-2">
+              <div className="w-8 h-8 rounded-xl flex items-center justify-center shrink-0" style={{ background: 'linear-gradient(135deg, #7C3AED, #A855F7)' }}>
+                <svg width="14" height="14" viewBox="0 0 24 24" fill="white"><path d="M12 2L9.19 9.19 2 12l7.19 2.81L12 22l2.81-7.19L22 12l-7.19-2.81L12 2z" /></svg>
+              </div>
+              <span className="font-bold text-gray-900 text-[17px] tracking-tight">Anthea</span>
+            </Link>
+            {event && (
+              <>
+                <span className="text-gray-300">/</span>
+                <span className="text-sm text-gray-500 truncate max-w-[180px]">{event.title}</span>
+              </>
+            )}
+          </div>
+          <div className="flex items-center gap-3">
+            <div className="flex items-center gap-2 px-3 py-1.5 rounded-lg bg-gray-50 border border-gray-200">
+              <div className={`w-2 h-2 rounded-full ${event ? 'bg-emerald-500 animate-pulse' : 'bg-gray-300'}`} />
+              <span className="text-xs font-mono text-gray-500">{event ? 'Agents Active' : 'Idle'}</span>
             </div>
-            <button className="px-4 py-2 bg-gradient-to-r from-purple-600 to-pink-600 text-white rounded-lg hover:from-purple-700 hover:to-pink-700 transition">
-              New Event
+            <button onClick={() => router.push('/intake')} className="px-4 py-2 rounded-lg bg-violet-600 hover:bg-violet-700 text-white text-sm font-semibold transition-colors">
+              + New Event
             </button>
           </div>
         </div>
-      </header>
+      </nav>
 
-      <main className="max-w-7xl mx-auto px-6 py-8">
-        {!event ? (
-          <EmptyState />
-        ) : (
-          <div className="space-y-6">
-            {/* Event Brief Section */}
-            <EventBriefSection event={event} />
+      <div className="max-w-[1100px] mx-auto px-8 py-8">
+        {!event ? <EmptyState /> : (
+          <>
+            {/* ── Event title bar ── */}
+            <div className="mb-6">
+              <h1 className="text-xl font-bold text-gray-900">{event.title}</h1>
+              <p className="text-sm text-gray-500 mt-0.5">
+                {new Date(event.date).toLocaleDateString('en-US', { weekday: 'long', month: 'long', day: 'numeric', year: 'numeric' })}
+                {event.time && ` · ${event.time}`}
+                {' · '}{event.guest_count} guests · {event.location_text}
+              </p>
+            </div>
 
-            {/* KPI Categories Section */}
-            <KpiCategoriesSection categories={categories} />
+            {/* ════ TOP GRID: sidebar + vendor table ════ */}
+            <div className="grid grid-cols-1 lg:grid-cols-3 gap-5 mb-5">
 
-            {/* Find Vendors Button */}
-            {categories.length > 0 && vendors.length === 0 && (
-              <div className="bg-blue-50 border border-blue-200 rounded-lg p-6 text-center">
-                <h3 className="text-lg font-semibold text-gray-900 mb-2">Ready to Find Vendors?</h3>
-                <p className="text-gray-600 mb-4">
-                  I've identified {categories.length} categories for your event. Let me search for the best vendors!
-                </p>
-                <button
-                  onClick={handleFindVendors}
-                  disabled={searchingVendors}
-                  className="px-6 py-3 bg-blue-600 text-white rounded-lg hover:bg-blue-700 transition disabled:opacity-50 disabled:cursor-not-allowed font-medium"
-                >
-                  {searchingVendors ? 'Searching Vendors...' : '🔍 Find Vendors'}
-                </button>
+              {/* Left sidebar */}
+              <div className="space-y-5">
+                <EventBriefPanel event={event} />
+                <KpiListPanel categories={categories} />
               </div>
-            )}
 
-            {/* Vendors Section */}
-            {vendors.length > 0 && (
-              <VendorsSection
-                vendors={vendors}
-                onVendorAction={handleVendorAction}
-                onCallVendor={handleCallVendor}
-              />
-            )}
-
-            {/* Generate Intelligence Report Button */}
-            {vendors.filter(v => v.status === 'approved').length > 0 && !weatherReport && (
-              <div className="bg-[#1a1a1a] border border-[#2a2a2a] rounded-lg p-6 text-center">
-                <h3 className="text-lg font-semibold text-white mb-2">Ready for Intelligence Report?</h3>
-                <p className="text-gray-400 mb-4">
-                  Get weather forecast, cost estimates, and legal guidance for your event
-                </p>
-                <button
-                  onClick={handleGenerateReport}
-                  disabled={generatingReport}
-                  className="px-6 py-3 bg-gradient-to-r from-purple-600 to-pink-600 text-white rounded-lg hover:from-purple-700 hover:to-pink-700 transition disabled:opacity-50 disabled:cursor-not-allowed font-medium"
-                >
-                  {generatingReport ? '⏳ Generating Report...' : '🔮 Generate Intelligence Report'}
-                </button>
+              {/* Vendor table — 2 col span */}
+              <div className="lg:col-span-2">
+                <VendorTableSection
+                  vendors={vendors}
+                  demoPhone={demoPhone}
+                  onPhoneChange={setDemoPhone}
+                  isDemoCalling={isDemoCalling}
+                  callLog={callLog}
+                  tickerRef={tickerRef}
+                  searchingVendors={searchingVendors}
+                  callingVendor={callingVendor}
+                  vendorQuote={vendorQuote}
+                  onFindVendors={handleFindVendors}
+                  onVendorAction={handleVendorAction}
+                  onCallVendor={handleCallVendor}
+                  onDemoCall={handleDemoCall}
+                />
               </div>
-            )}
+            </div>
 
-            {/* Weather/Legal Panel */}
-            <WeatherLegalSection report={weatherReport} costBreakdown={costBreakdown} />
-
-            {/* Invite Preview Section */}
-            <InvitePreviewSection
-              eventId={event.id}
-              invite={invite}
-              onGenerate={handleGenerateInvite}
-              generating={generatingInvite}
-            />
-
-            {/* RSVP List Section */}
-            <RsvpListSection guests={guests} />
-
-            {/* Orders/Payment Section */}
-            <OrdersSection
-              orders={orders}
-              vendors={vendors}
-              onCreateOrders={handleCreateOrders}
-              processing={processingPayment}
-            />
-          </div>
+            {/* ════ BOTTOM GRID: 3 equal modules ════ */}
+            <div className="grid grid-cols-1 lg:grid-cols-3 gap-5">
+              <InviteRsvpHub invite={invite} guests={guests} generating={generatingInvite} onGenerate={handleGenerateInvite} />
+              <IntelligencePanel report={weatherReport} costBreakdown={costBreakdown} generating={generatingReport} onGenerate={handleGenerateReport} />
+              <CheckoutPipeline orders={orders} approvedVendors={approvedVendors} subtotal={subtotal} orderTotal={orderTotal} processing={processingPayment} done={paymentDone} onCreateOrders={handleCreateOrders} />
+            </div>
+          </>
         )}
-      </main>
+      </div>
     </div>
   );
 }
+
+/* ════════════════ SUB-COMPONENTS ════════════════ */
 
 function EmptyState() {
+  const router = useRouter();
   return (
-    <div className="bg-white rounded-lg shadow-sm border border-gray-200 p-12 text-center">
-      <div className="max-w-md mx-auto">
-        <div className="w-16 h-16 bg-blue-100 rounded-full flex items-center justify-center mx-auto mb-4">
-          <svg className="w-8 h-8 text-blue-600" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-            <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 6v6m0 0v6m0-6h6m-6 0H6" />
-          </svg>
-        </div>
-        <h2 className="text-xl font-semibold text-gray-900 mb-2">No Event Yet</h2>
-        <p className="text-gray-600 mb-6">
-          Start by creating a new event. Our AI agents will help you plan everything from vendor selection to guest invitations.
-        </p>
-        <button className="px-6 py-3 bg-blue-600 text-white rounded-lg hover:bg-blue-700 transition font-medium">
-          Create Your First Event
-        </button>
-      </div>
+    <div className="flex flex-col items-center justify-center py-32 text-center">
+      <div className="w-16 h-16 rounded-2xl bg-violet-50 border border-violet-100 flex items-center justify-center text-3xl mb-5">📅</div>
+      <h2 className="text-lg font-bold text-gray-900 mb-2">No event loaded</h2>
+      <p className="text-sm text-gray-500 mb-6 max-w-xs">Start planning to populate this dashboard with live agent data.</p>
+      <button onClick={() => router.push('/intake')} className="px-6 py-3 rounded-xl bg-violet-600 hover:bg-violet-700 text-white text-sm font-semibold transition-colors shadow-sm shadow-violet-200">
+        Plan an Event
+      </button>
     </div>
   );
 }
 
-function EventBriefSection({ event }: { event: Event }) {
+/* ── Event brief panel ── */
+function EventBriefPanel({ event }: { event: Event }) {
+  const rows = [
+    ['Date',   new Date(event.date).toLocaleDateString('en-US', { weekday: 'short', month: 'short', day: 'numeric' })],
+    ['Time',   event.time || 'TBD'],
+    ['Guests', `${event.guest_count} people`],
+    ['Budget', event.budget_total ? `$${event.budget_total.toLocaleString()}` : 'Open'],
+    ['Status', event.status],
+  ];
   return (
-    <section className="bg-white rounded-lg shadow-sm border border-gray-200 p-6">
-      <h2 className="text-lg font-semibold text-gray-900 mb-4">Event Brief</h2>
-      <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
-        <div>
-          <p className="text-sm text-gray-500">Title</p>
-          <p className="font-medium text-gray-900">{event.title}</p>
-        </div>
-        <div>
-          <p className="text-sm text-gray-500">Type</p>
-          <p className="font-medium text-gray-900 capitalize">{event.event_type.replace('_', ' ')}</p>
-        </div>
-        <div>
-          <p className="text-sm text-gray-500">Date</p>
-          <p className="font-medium text-gray-900">{new Date(event.date).toLocaleDateString()}</p>
-        </div>
-        <div>
-          <p className="text-sm text-gray-500">Guests</p>
-          <p className="font-medium text-gray-900">{event.guest_count}</p>
-        </div>
-        <div className="col-span-2">
-          <p className="text-sm text-gray-500">Location</p>
-          <p className="font-medium text-gray-900">{event.location_text}</p>
-        </div>
-        <div>
-          <p className="text-sm text-gray-500">Budget</p>
-          <p className="font-medium text-gray-900">
-            {event.budget_total ? `$${event.budget_total.toLocaleString()}` : 'Not set'}
-          </p>
-        </div>
-        <div>
-          <p className="text-sm text-gray-500">Status</p>
-          <span className="inline-flex items-center px-2.5 py-0.5 rounded-full text-xs font-medium bg-blue-100 text-blue-800 capitalize">
-            {event.status}
-          </span>
-        </div>
+    <section className="p-5 rounded-xl" style={card}>
+      <div className="flex justify-between items-center mb-3">
+        <h2 className="text-sm font-semibold text-gray-900 flex items-center gap-2">🧠 Orchestrator Intake</h2>
+        <span className="text-[10px] font-mono px-2 py-0.5 rounded-full bg-violet-50 text-violet-600 border border-violet-200">Vapi STT / Text</span>
       </div>
-    </section>
-  );
-}
 
-function KpiCategoriesSection({ categories }: { categories: KpiCategory[] }) {
-  return (
-    <section className="bg-white rounded-lg shadow-sm border border-gray-200 p-6">
-      <h2 className="text-lg font-semibold text-gray-900 mb-4">KPI Categories</h2>
-      {categories.length === 0 ? (
-        <p className="text-gray-500 text-center py-8">No categories defined yet</p>
-      ) : (
-        <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
-          {categories.map((category) => (
-            <div key={category.id} className="border border-gray-200 rounded-lg p-4">
-              <p className="font-medium text-gray-900 capitalize mb-2">
-                {category.name.replace('_', ' & ')}
-              </p>
-              <span className={`inline-flex items-center px-2 py-1 rounded text-xs font-medium ${getStatusColor(category.status)}`}>
-                {category.status.replace('_', ' ')}
-              </span>
-            </div>
-          ))}
-        </div>
-      )}
-    </section>
-  );
-}
+      <div className="p-3 rounded-lg text-sm mb-4" style={{ background: preview, border: div1 }}>
+        <span className="text-[10px] font-mono text-gray-400 block mb-1">Extracted Brief:</span>
+        <p className="text-gray-700 leading-relaxed">
+          "{event.event_type.replace(/_/g, ' ')}, {event.guest_count} guests, {event.location_text}."
+        </p>
+      </div>
 
-function VendorsSection({
-  vendors,
-  onVendorAction,
-  onCallVendor
-}: {
-  vendors: Vendor[];
-  onVendorAction: (vendorId: string, status: 'approved' | 'rejected') => void;
-  onCallVendor: (vendorId: string) => void;
-}) {
-  return (
-    <section className="bg-white rounded-lg shadow-sm border border-gray-200 p-6">
-      <h2 className="text-lg font-semibold text-gray-900 mb-4">Vendors ({vendors.length})</h2>
-      <div className="space-y-3">
-        {vendors.map((vendor) => (
-          <div key={vendor.id} className="border border-gray-200 rounded-lg p-4 flex items-center justify-between">
-            <div className="flex-1">
-              <h3 className="font-medium text-gray-900">{vendor.name}</h3>
-              <div className="flex items-center gap-4 mt-1 text-sm text-gray-600">
-                <span>⭐ {vendor.rating.toFixed(1)} ({vendor.review_count} reviews)</span>
-                {vendor.price_estimate && <span>${vendor.price_estimate.toLocaleString()}</span>}
-                <span className="capitalize">{vendor.source}</span>
-              </div>
-            </div>
-            <div className="flex items-center gap-2">
-              <span className={`px-3 py-1 rounded-full text-xs font-medium ${getVendorStatusColor(vendor.status)}`}>
-                {vendor.status}
-              </span>
-              {vendor.status === 'shortlisted' && (
-                <div className="flex gap-2">
-                  <button
-                    onClick={() => onVendorAction(vendor.id, 'approved')}
-                    className="px-3 py-1 bg-green-600 text-white rounded text-sm hover:bg-green-700 transition"
-                  >
-                    Approve
-                  </button>
-                  <button
-                    onClick={() => onVendorAction(vendor.id, 'rejected')}
-                    className="px-3 py-1 bg-red-600 text-white rounded text-sm hover:bg-red-700 transition"
-                  >
-                    Reject
-                  </button>
-                </div>
-              )}
-              {vendor.status === 'approved' && (
-                <button
-                  onClick={() => onCallVendor(vendor.id)}
-                  className="px-3 py-1 bg-blue-600 text-white rounded text-sm hover:bg-blue-700 transition flex items-center gap-1"
-                >
-                  📞 Call Vendor
-                </button>
-              )}
-            </div>
+      <div className="space-y-0">
+        {rows.map(([label, val]) => (
+          <div key={label} className="flex justify-between py-2 text-xs" style={{ borderBottom: div2 }}>
+            <span className="text-gray-400">{label}</span>
+            <span className="text-gray-700 font-medium capitalize">{val}</span>
           </div>
         ))}
       </div>
+
+      <Link href="/intake" className="mt-4 block text-center py-2 rounded-lg text-xs font-semibold text-violet-600 bg-violet-50 hover:bg-violet-100 border border-violet-200 transition-colors">
+        Modify Brief →
+      </Link>
     </section>
   );
 }
 
-function InvitePreviewSection({
-  eventId,
-  invite,
-  onGenerate,
-  generating
-}: {
-  eventId: string;
-  invite: Invite | null;
-  onGenerate: () => void;
-  generating: boolean;
-}) {
-  if (!invite) {
-    return (
-      <section className="bg-[#1a1a1a] border border-[#2a2a2a] rounded-lg p-6">
-        <h2 className="text-lg font-semibold text-white mb-4">📨 Event Invitation</h2>
-        <div className="text-center py-8">
-          <p className="text-gray-400 mb-4">Generate a beautiful AI-powered invitation for your event</p>
+/* ── KPI categories list ── */
+function KpiListPanel({ categories }: { categories: KpiCategory[] }) {
+  return (
+    <section className="p-5 rounded-xl" style={card}>
+      <h2 className="text-sm font-semibold text-gray-900 flex items-center gap-2 mb-4">📊 KPI Categories Progress</h2>
+      {categories.length === 0
+        ? <p className="text-xs text-gray-400">Awaiting intake to extract planning categories…</p>
+        : (
+          <div className="space-y-2">
+            {categories.map(cat => (
+              <div key={cat.id} className="flex justify-between items-center p-2.5 rounded-lg" style={{ background: preview, border: div1 }}>
+                <span className="text-sm text-gray-700 font-medium flex items-center gap-2">
+                  <span>{CAT_ICON[cat.name] || '📋'}</span>
+                  <span className="capitalize">{cat.name.replace(/_/g, ' ')}</span>
+                </span>
+                <span className={`text-[10px] font-mono px-2 py-0.5 rounded-full ${KPI_BADGE[cat.status] || 'bg-gray-100 text-gray-500'}`}>
+                  {KPI_LABEL[cat.status] || cat.status}
+                </span>
+              </div>
+            ))}
+          </div>
+        )
+      }
+    </section>
+  );
+}
+
+/* ── Vendor table ── */
+interface VendorTableProps {
+  vendors: Vendor[];
+  demoPhone: string; onPhoneChange: (v: string) => void;
+  isDemoCalling: boolean; callLog: string[];
+  tickerRef: React.RefObject<HTMLDivElement | null>;
+  searchingVendors: boolean; callingVendor: string | null; vendorQuote: VendorQuote | null;
+  onFindVendors: () => void;
+  onVendorAction: (id: string, s: 'approved' | 'rejected') => void;
+  onCallVendor: (id: string) => void;
+  onDemoCall: () => void;
+}
+
+function VendorTableSection(p: VendorTableProps) {
+  return (
+    <section className="p-5 rounded-xl flex flex-col h-full" style={card}>
+      {/* Header */}
+      <div className="flex flex-col sm:flex-row sm:items-start justify-between gap-4 mb-4">
+        <div>
+          <h2 className="text-sm font-semibold text-gray-900 flex items-center gap-2">🔍 Vendor Research Agent Shortlist</h2>
+          <p className="text-[11px] font-mono text-gray-400 mt-0.5">Signal Scope: Google • Yelp • Amazon | Mode: Rating Sorted</p>
+        </div>
+        {/* Demo call trigger */}
+        <div className="flex items-center gap-2 p-2 rounded-lg shrink-0 self-start" style={{ background: preview, border: '1px solid #FCA5A5' }}>
+          <input
+            type="tel" value={p.demoPhone} onChange={e => p.onPhoneChange(e.target.value)}
+            disabled={p.isDemoCalling}
+            className="w-32 text-xs rounded-lg px-2 py-1.5 text-gray-700"
+            style={{ background: '#FFFFFF', border: div1 }}
+          />
           <button
-            onClick={onGenerate}
-            disabled={generating}
-            className="px-6 py-3 bg-gradient-to-r from-purple-600 to-pink-600 text-white rounded-lg hover:from-purple-700 hover:to-pink-700 transition disabled:opacity-50 disabled:cursor-not-allowed font-medium"
+            onClick={p.onDemoCall} disabled={p.isDemoCalling || !p.demoPhone.trim()}
+            className="flex items-center gap-1 text-xs font-bold px-3 py-1.5 rounded-lg text-white transition-colors disabled:opacity-50"
+            style={{ background: p.isDemoCalling ? '#9CA3AF' : '#DC2626' }}
           >
-            {generating ? '⏳ Generating Invite...' : '✨ Generate Invitation'}
+            {p.isDemoCalling ? '⏳ Dialing…' : '📞 Test Call'}
           </button>
         </div>
-      </section>
-    );
-  }
-
-  return (
-    <section className="bg-[#1a1a1a] border border-[#2a2a2a] rounded-lg p-6">
-      <h2 className="text-lg font-semibold text-white mb-4">📨 Event Invitation</h2>
-      
-      <div className="grid md:grid-cols-2 gap-6">
-        {/* Invite Preview */}
-        <div className="bg-[#0a0a0a] rounded-lg p-4 border border-[#2a2a2a]">
-          <h3 className="text-sm font-medium text-gray-400 mb-3">Preview</h3>
-          {invite.image_url ? (
-            <img
-              src={invite.image_url}
-              alt="Invitation"
-              className="w-full rounded-lg border border-[#2a2a2a]"
-            />
-          ) : (
-            <div className="aspect-square bg-gradient-to-br from-purple-600/20 to-pink-600/20 rounded-lg flex items-center justify-center">
-              <p className="text-gray-500">Generating image...</p>
-            </div>
-          )}
-          {invite.video_url && (
-            <div className="mt-3">
-              <video
-                src={invite.video_url}
-                controls
-                className="w-full rounded-lg border border-[#2a2a2a]"
-              />
-            </div>
-          )}
-        </div>
-
-        {/* Share Options */}
-        <div className="space-y-4">
-          <div className="bg-[#0a0a0a] rounded-lg p-4 border border-[#2a2a2a]">
-            <h3 className="text-sm font-medium text-gray-400 mb-3">Share Link</h3>
-            <div className="flex gap-2">
-              <input
-                type="text"
-                value={invite.share_url || ''}
-                readOnly
-                className="flex-1 px-3 py-2 bg-[#1a1a1a] border border-[#2a2a2a] text-white rounded text-sm"
-              />
-              <button
-                onClick={() => navigator.clipboard.writeText(invite.share_url || '')}
-                className="px-4 py-2 bg-purple-600 text-white rounded hover:bg-purple-700 transition text-sm"
-              >
-                Copy
-              </button>
-            </div>
-          </div>
-
-          {invite.qr_code_url && (
-            <div className="bg-[#0a0a0a] rounded-lg p-4 border border-[#2a2a2a]">
-              <h3 className="text-sm font-medium text-gray-400 mb-3">QR Code</h3>
-              <img
-                src={invite.qr_code_url}
-                alt="QR Code"
-                className="w-32 h-32 mx-auto border-4 border-[#2a2a2a] rounded-lg"
-              />
-              <p className="text-xs text-gray-500 text-center mt-2">Scan to RSVP</p>
-            </div>
-          )}
-
-          {invite.message_text && (
-            <div className="bg-[#0a0a0a] rounded-lg p-4 border border-[#2a2a2a]">
-              <h3 className="text-sm font-medium text-gray-400 mb-3">Message</h3>
-              <p className="text-sm text-gray-300 whitespace-pre-line">{invite.message_text}</p>
-            </div>
-          )}
-        </div>
       </div>
-    </section>
-  );
-}
 
-function RsvpListSection({ guests }: { guests: Guest[] }) {
-  const yesCount = guests.filter(g => g.response === 'yes').length;
-  const noCount = guests.filter(g => g.response === 'no').length;
-  const maybeCount = guests.filter(g => g.response === 'maybe').length;
-
-  return (
-    <section className="bg-white rounded-lg shadow-sm border border-gray-200 p-6">
-      <div className="flex items-center justify-between mb-4">
-        <h2 className="text-lg font-semibold text-gray-900">RSVP Responses</h2>
-        <div className="flex gap-4 text-sm">
-          <span className="text-green-600 font-medium">✓ {yesCount} Yes</span>
-          <span className="text-red-600 font-medium">✗ {noCount} No</span>
-          <span className="text-yellow-600 font-medium">? {maybeCount} Maybe</span>
+      {/* Terminal ticker */}
+      {p.callLog.length > 0 && (
+        <div ref={p.tickerRef} className="bg-gray-900 text-green-400 font-mono text-xs p-3 rounded-lg mb-4 h-20 overflow-y-auto border border-gray-200">
+          {p.callLog.map((line, i) => <div key={i}>{line}</div>)}
         </div>
-      </div>
-      {guests.length === 0 ? (
-        <p className="text-gray-500 text-center py-8">No RSVPs yet</p>
+      )}
+
+      {/* Table or empty CTA */}
+      {p.vendors.length === 0 ? (
+        <div className="flex-1 flex flex-col items-center justify-center py-12 text-center">
+          <div className="text-3xl mb-3">🔍</div>
+          <p className="text-sm text-gray-600 mb-1 font-medium">No vendors sourced yet</p>
+          <p className="text-xs text-gray-400 mb-5">Anthea will search Google, Yelp, and Amazon for top-rated vendors in your area.</p>
+          <button onClick={p.onFindVendors} disabled={p.searchingVendors}
+            className="flex items-center gap-2 px-5 py-2.5 rounded-lg text-sm font-semibold text-white transition-colors disabled:opacity-50 shadow-sm"
+            style={{ background: '#7C3AED' }}>
+            {p.searchingVendors && <span className="w-3.5 h-3.5 border-2 border-white/40 border-t-white rounded-full animate-spin-slow" />}
+            {p.searchingVendors ? 'Searching…' : '🔍 Find Vendors'}
+          </button>
+        </div>
       ) : (
-        <div className="space-y-2">
-          {guests.map((guest) => (
-            <div key={guest.id} className="border border-gray-200 rounded p-3 flex items-center justify-between">
-              <div>
-                <p className="font-medium text-gray-900">{guest.name}</p>
-                <p className="text-sm text-gray-600">{guest.contact}</p>
-                {guest.comments && <p className="text-sm text-gray-500 mt-1">{guest.comments}</p>}
-              </div>
-              <span className={`px-3 py-1 rounded-full text-xs font-medium ${getResponseColor(guest.response)}`}>
-                {guest.response}
-              </span>
-            </div>
-          ))}
+        <div className="overflow-x-auto">
+          <table className="w-full text-left text-sm">
+            <thead className="text-[11px] uppercase text-gray-400 font-mono" style={{ background: preview }}>
+              <tr>
+                <th className="px-3 py-2.5 rounded-tl-lg">Vendor Name</th>
+                <th className="px-3 py-2.5">Source</th>
+                <th className="px-3 py-2.5 text-center">Rating</th>
+                <th className="px-3 py-2.5 text-right">Est. Cost</th>
+                <th className="px-3 py-2.5 text-center rounded-tr-lg">Actions / Status</th>
+              </tr>
+            </thead>
+            <tbody>
+              {p.vendors.map((v, i) => (
+                <tr key={v.id} className="hover:bg-gray-50 transition-colors" style={{ borderTop: div1 }}>
+                  <td className="px-3 py-3 font-semibold text-gray-900">{v.name}</td>
+                  <td className="px-3 py-3 text-[11px] text-gray-400 font-mono capitalize">{v.source}</td>
+                  <td className="px-3 py-3 text-center">
+                    <span className="text-emerald-600 font-bold">{v.rating.toFixed(1)}</span>
+                    <span className="text-xs text-gray-400 ml-1">({v.review_count.toLocaleString()})</span>
+                  </td>
+                  <td className="px-3 py-3 text-right font-mono text-gray-700">
+                    {v.price_estimate ? `€${v.price_estimate.toLocaleString()}` : '—'}
+                  </td>
+                  <td className="px-3 py-3 text-center">
+                    <div className="flex items-center justify-center gap-1.5 flex-wrap">
+                      <span className={`text-[10px] font-mono px-2 py-0.5 rounded-full ${VENDOR_BADGE[v.status] || 'bg-gray-100 text-gray-500'}`}>
+                        {v.status === 'approved' ? '✓ Approved' : v.status}
+                      </span>
+                      {v.status === 'shortlisted' && (
+                        <>
+                          <button onClick={() => p.onVendorAction(v.id, 'approved')} className="text-[10px] font-semibold px-2 py-0.5 rounded-full bg-emerald-50 text-emerald-700 border border-emerald-200 hover:bg-emerald-100 transition-colors">Approve</button>
+                          <button onClick={() => p.onVendorAction(v.id, 'rejected')} className="text-[10px] font-semibold px-2 py-0.5 rounded-full bg-red-50 text-red-700 border border-red-200 hover:bg-red-100 transition-colors">Reject</button>
+                        </>
+                      )}
+                      {v.status === 'approved' && (
+                        <button onClick={() => p.onCallVendor(v.id)} disabled={!!p.callingVendor} className="text-[10px] font-semibold px-2 py-0.5 rounded-full bg-blue-50 text-blue-700 border border-blue-200 hover:bg-blue-100 transition-colors disabled:opacity-40">
+                          {p.callingVendor === v.id ? '⏳ Calling…' : '📞 Simulate Call'}
+                        </button>
+                      )}
+                    </div>
+                  </td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </div>
+      )}
+
+      {/* Quote result */}
+      {p.vendorQuote && (
+        <div className="mt-4 p-3 rounded-lg font-mono text-xs bg-gray-900 text-green-400 border border-gray-200">
+          <p className="text-gray-500 mb-1">[VAPI]: Live Call Transcript & Quote —</p>
+          <p className="whitespace-pre-wrap leading-relaxed">{p.vendorQuote.transcript_or_notes}</p>
+          {p.vendorQuote.quoted_price && <p className="mt-2 text-emerald-400 font-bold">Extracted Quote: ${p.vendorQuote.quoted_price}</p>}
         </div>
       )}
     </section>
   );
 }
 
-function WeatherLegalSection({ report, costBreakdown }: { report: WeatherLegalReport | null; costBreakdown: any }) {
-  if (!report) return null;
+/* ── Invite & RSVP hub ── */
+function InviteRsvpHub({ invite, guests, generating, onGenerate }: {
+  invite: Invite | null; guests: Guest[]; generating: boolean; onGenerate: () => void;
+}) {
+  const yes = guests.filter(g => g.response === 'yes').length;
+  const no  = guests.filter(g => g.response === 'no').length;
+  const mb  = guests.filter(g => g.response === 'maybe').length;
 
   return (
-    <section className="bg-[#1a1a1a] border border-[#2a2a2a] rounded-lg p-6">
-      <h2 className="text-lg font-semibold text-white mb-6">🔮 Intelligence Report</h2>
-      
-      <div className="grid md:grid-cols-3 gap-6">
-        {/* Weather Forecast */}
-        <div className="bg-[#0a0a0a] rounded-lg p-4 border border-[#2a2a2a]">
-          <h3 className="font-medium text-purple-400 mb-3 flex items-center gap-2">
-            <span>🌤️</span> Weather Forecast
-          </h3>
-          <p className="text-3xl font-bold text-white mb-1">{report.forecast_temp}°C</p>
-          <p className="text-gray-400 mb-2">{report.forecast_condition}</p>
-          {report.forecast_precipitation !== undefined && (
-            <p className="text-sm text-gray-500">💧 {report.forecast_precipitation}mm precipitation</p>
-          )}
-          {report.forecast_wind_speed !== undefined && (
-            <p className="text-sm text-gray-500">💨 {report.forecast_wind_speed}km/h wind</p>
-          )}
-        </div>
+    <section className="p-5 rounded-xl flex flex-col" style={card}>
+      <div className="flex justify-between items-center mb-4">
+        <h2 className="text-sm font-semibold text-gray-900 flex items-center gap-2">✨ Invite & RSVP Hub</h2>
+        <span className="text-[10px] font-mono px-2 py-0.5 rounded-full bg-fuchsia-50 text-fuchsia-600 border border-fuchsia-200">PixVerse AI</span>
+      </div>
 
-        {/* Cost Estimate */}
-        <div className="bg-[#0a0a0a] rounded-lg p-4 border border-[#2a2a2a]">
-          <h3 className="font-medium text-pink-400 mb-3 flex items-center gap-2">
-            <span>💰</span> Cost Estimate
-          </h3>
-          <p className="text-3xl font-bold text-white mb-3">
-            €{report.cost_estimate?.toLocaleString() || 0}
-          </p>
-          {costBreakdown && (
-            <div className="space-y-1 text-sm">
-              <div className="flex justify-between text-gray-400">
-                <span>Vendors:</span>
-                <span>€{costBreakdown.vendors?.toLocaleString()}</span>
-              </div>
-              <div className="flex justify-between text-gray-400">
-                <span>Permits:</span>
-                <span>€{costBreakdown.permits?.toLocaleString()}</span>
-              </div>
-              <div className="flex justify-between text-gray-400">
-                <span>Insurance:</span>
-                <span>€{costBreakdown.insurance?.toLocaleString()}</span>
-              </div>
-              <div className="flex justify-between text-gray-400 pt-1 border-t border-[#2a2a2a]">
-                <span>Contingency:</span>
-                <span>€{costBreakdown.contingency?.toLocaleString()}</span>
-              </div>
+      {/* Preview */}
+      {invite?.image_url ? (
+        <>
+          {invite.image_url.startsWith('data:') && (
+            <div className="flex items-start gap-2 p-2.5 rounded-lg mb-2 text-xs bg-amber-50 border border-amber-200 text-amber-700">
+              ⚠️ Insufficient PixVerse tokens — showing template invite.
             </div>
           )}
+          <div className="relative rounded-xl overflow-hidden mb-3 aspect-video border border-gray-200">
+            <img src={invite.image_url} alt="Invite" className="w-full h-full object-cover" />
+            <div className="absolute inset-0 bg-gradient-to-t from-black/60 via-transparent to-transparent flex flex-col justify-end p-3">
+              <p className="text-[10px] font-mono uppercase tracking-widest text-violet-300">Generated Invite Preview</p>
+              <p className="text-sm font-bold text-white truncate">{invite.message_text?.split('\n')[0] || 'Event Invitation'}</p>
+            </div>
+          </div>
+        </>
+      ) : (
+        <div className="rounded-xl mb-3 aspect-video flex flex-col items-center justify-center border border-gray-200" style={{ background: 'linear-gradient(135deg, #EDE9FE, #FCE7F3)' }}>
+          <p className="text-2xl mb-2">📨</p>
+          <p className="text-xs text-violet-500 font-medium">No invite generated yet</p>
         </div>
+      )}
 
-        {/* Legal Considerations */}
-        <div className="bg-[#0a0a0a] rounded-lg p-4 border border-[#2a2a2a]">
-          <h3 className="font-medium text-blue-400 mb-3 flex items-center gap-2">
-            <span>⚖️</span> Legal Guidance
-          </h3>
-          {report.legal_notes && report.legal_notes.length > 0 ? (
-            <ul className="space-y-2 text-sm text-gray-400">
-              {report.legal_notes.slice(0, 5).map((note, i) => (
-                <li key={i} className="leading-relaxed">{note}</li>
-              ))}
-            </ul>
-          ) : (
-            <p className="text-sm text-gray-500">No special considerations</p>
-          )}
+      {/* Actions */}
+      <div className="grid grid-cols-2 gap-2 mb-4">
+        {invite?.image_url ? (
+          <a href={invite.image_url} download="invite.png" className="flex items-center justify-center gap-1.5 text-xs font-semibold py-2 rounded-lg border border-gray-200 text-gray-600 hover:bg-gray-50 transition-colors">
+            ↓ Download Assets
+          </a>
+        ) : (
+          <button onClick={onGenerate} disabled={generating} className="flex items-center justify-center gap-1.5 text-xs font-semibold py-2 rounded-lg border border-violet-200 bg-violet-50 text-violet-700 hover:bg-violet-100 transition-colors disabled:opacity-50">
+            {generating ? '⏳ Generating…' : '✨ Generate Invite'}
+          </button>
+        )}
+        <button onClick={() => invite?.share_url && navigator.clipboard.writeText(invite.share_url)} disabled={!invite?.share_url}
+          className="flex items-center justify-center gap-1.5 text-xs font-semibold py-2 rounded-lg border border-gray-200 text-gray-600 hover:bg-gray-50 transition-colors disabled:opacity-30">
+          🔗 Copy RSVP Link
+        </button>
+      </div>
+
+      {/* RSVP list */}
+      <div style={{ borderTop: div1, paddingTop: '12px' }}>
+        <div className="flex justify-between items-center text-xs text-gray-400 font-mono mb-2">
+          <span>Live Responses</span>
+          <span className="flex gap-3">
+            <span className="text-emerald-600">{yes} Yes</span>
+            <span className="text-red-500">{no} No</span>
+            <span className="text-amber-600">{mb} Maybe</span>
+          </span>
         </div>
+        {guests.length > 0 ? (
+          <div className="space-y-1 max-h-28 overflow-y-auto">
+            {guests.map(g => (
+              <div key={g.id} className="flex justify-between text-xs p-1.5 rounded-lg" style={{ background: preview, border: div1 }}>
+                <span className="text-gray-700 font-medium truncate">{g.name}</span>
+                <span className={`font-mono shrink-0 ml-2 ${g.response === 'yes' ? 'text-emerald-600' : g.response === 'no' ? 'text-red-500' : 'text-amber-600'}`}>
+                  {g.response === 'yes' ? 'Confirmed' : g.response === 'no' ? 'Declined' : 'Maybe'}
+                </span>
+              </div>
+            ))}
+          </div>
+        ) : (
+          <p className="text-xs text-gray-400">No RSVPs yet. Share the invite link.</p>
+        )}
       </div>
     </section>
   );
 }
 
-function OrdersSection({
-  orders,
-  vendors,
-  onCreateOrders,
-  processing
-}: {
-  orders: Order[];
-  vendors: Vendor[];
-  onCreateOrders: () => void;
-  processing: boolean;
+/* ── Intelligence panel ── */
+function IntelligencePanel({ report, costBreakdown, generating, onGenerate }: {
+  report: WeatherLegalReport | null; costBreakdown: any; generating: boolean; onGenerate: () => void;
 }) {
-  const totalAmount = orders.reduce((sum, order) => sum + order.amount, 0);
-  const approvedVendors = vendors.filter(v => v.status === 'approved');
-  const canCreateOrders = approvedVendors.length > 0 && orders.length === 0;
+  return (
+    <section className="p-5 rounded-xl" style={card}>
+      <h2 className="text-sm font-semibold text-gray-900 flex items-center gap-2 mb-4">⛅ Cost, Weather & Legal Agent</h2>
+
+      {!report ? (
+        <div className="flex flex-col items-center justify-center py-10 text-center">
+          <p className="text-sm text-gray-500 mb-1 font-medium">No intelligence report yet</p>
+          <p className="text-xs text-gray-400 mb-5">Fetches live weather, permit guidance, and cost estimates.</p>
+          <button onClick={onGenerate} disabled={generating}
+            className="flex items-center gap-2 px-5 py-2.5 rounded-lg text-sm font-semibold text-white disabled:opacity-50 transition-colors shadow-sm"
+            style={{ background: '#2563EB' }}>
+            {generating && <span className="w-3.5 h-3.5 border-2 border-white/40 border-t-white rounded-full animate-spin-slow" />}
+            {generating ? 'Generating…' : '🔮 Generate Report'}
+          </button>
+        </div>
+      ) : (
+        <>
+          {/* Weather warning */}
+          {(report.forecast_precipitation ?? 0) > 1 && (
+            <div className="flex items-start gap-2 p-3 rounded-xl mb-4 bg-amber-50 border border-amber-200">
+              <span className="text-amber-500 text-sm mt-0.5">⚠️</span>
+              <div>
+                <h4 className="text-xs font-bold text-amber-700">Weather Mitigation Active</h4>
+                <p className="text-xs text-amber-600 mt-0.5">Forecast shows precipitation — consider indoor or tent fallback.</p>
+              </div>
+            </div>
+          )}
+
+          {/* Temperature display */}
+          <div className="flex items-center gap-3 mb-4 p-3 rounded-lg" style={{ background: preview, border: div1 }}>
+            <div className="text-3xl font-bold text-gray-900">{report.forecast_temp}°C</div>
+            <div>
+              <p className="text-sm text-gray-700 font-medium">{report.forecast_condition}</p>
+              <p className="text-xs text-gray-400 font-mono">💧 {report.forecast_precipitation}mm · 💨 {report.forecast_wind_speed}km/h</p>
+            </div>
+          </div>
+
+          {/* Key-value rows */}
+          <div className="space-y-0 text-xs">
+            <div className="flex justify-between py-2" style={{ borderBottom: div1 }}>
+              <span className="text-gray-400">Cost Estimate:</span>
+              <span className="text-gray-900 font-semibold font-mono">€{(report.cost_estimate || 0).toLocaleString()}</span>
+            </div>
+            {costBreakdown && (
+              <div className="flex justify-between py-2" style={{ borderBottom: div1 }}>
+                <span className="text-gray-400">Vendors Subtotal:</span>
+                <span className="text-gray-900 font-mono">€{Number(costBreakdown.vendors).toLocaleString()}</span>
+              </div>
+            )}
+            {report.legal_notes?.slice(0, 2).map((note, i) => (
+              <div key={i} className="flex justify-between py-2 gap-4" style={{ borderBottom: i < 1 ? div1 : 'none' }}>
+                <span className="text-gray-400 shrink-0">{i === 0 ? 'Legal:' : 'Mitigation:'}</span>
+                <span className={`text-right ${i === 0 ? 'text-amber-600' : 'text-blue-600'}`}>{note}</span>
+              </div>
+            ))}
+          </div>
+        </>
+      )}
+    </section>
+  );
+}
+
+/* ── Checkout pipeline ── */
+function CheckoutPipeline({ orders, approvedVendors, subtotal, orderTotal, processing, done, onCreateOrders }: {
+  orders: Order[]; approvedVendors: Vendor[]; subtotal: number; orderTotal: number;
+  processing: boolean; done: boolean; onCreateOrders: () => void;
+}) {
+  const total   = orderTotal || subtotal;
+  const hasPaid = orders.some(o => o.payment_status === 'mock_paid');
 
   return (
-    <section className="bg-[#1a1a1a] border border-[#2a2a2a] rounded-lg p-6">
-      <div className="flex items-center justify-between mb-6">
-        <h2 className="text-lg font-semibold text-white">💳 Orders & Payment</h2>
+    <section className="p-5 rounded-xl flex flex-col justify-between" style={{ ...card, border: '1px dashed #D1D5DB' }}>
+      <div>
+        <div className="flex justify-between items-center mb-3">
+          <h2 className="text-sm font-semibold text-gray-900 flex items-center gap-2">💳 Checkout Pipeline</h2>
+          <span className="text-[10px] font-mono font-bold uppercase px-2 py-0.5 rounded-full bg-blue-50 text-blue-600 border border-blue-200">
+            Powered by Mollie
+          </span>
+        </div>
+        <p className="text-xs text-gray-400 mb-4">Complete your secure multi-agent structured order confirmation instantly.</p>
+
+        {/* Financial breakdown */}
+        <div className="p-4 rounded-xl space-y-2 mb-4" style={{ background: preview, border: div1 }}>
+          <div className="flex justify-between text-xs text-gray-400">
+            <span>Approved Vendors Subtotal</span>
+            <span className="font-mono text-gray-600">€{subtotal.toLocaleString()}</span>
+          </div>
+          <div className="flex justify-between text-xs text-gray-400">
+            <span>Estimated AI Handling Fees</span>
+            <span className="font-mono text-gray-600">€0.00</span>
+          </div>
+          <div className="h-px" style={{ background: '#E5E7EB' }} />
+          <div className="flex justify-between">
+            <span className="font-bold text-gray-900 text-sm">Total Event Budget:</span>
+            <span className="font-mono font-bold text-emerald-600 text-base">€{total.toLocaleString()}</span>
+          </div>
+        </div>
+
+        {/* Order history */}
         {orders.length > 0 && (
-          <div className="text-right">
-            <p className="text-sm text-gray-400">Total</p>
-            <p className="text-2xl font-bold text-white">€{totalAmount.toLocaleString()}</p>
+          <div className="space-y-1 mb-4">
+            {orders.map(o => (
+              <div key={o.id} className="flex justify-between text-xs p-2 rounded-lg" style={{ background: preview, border: div1 }}>
+                <span className="text-gray-400 font-mono">{o.invoice_ref?.slice(0, 16) || o.id.slice(0, 12)}…</span>
+                <span className={o.payment_status === 'mock_paid' ? 'text-emerald-600 font-semibold' : 'text-amber-600'}>
+                  {o.payment_status === 'mock_paid' ? 'Paid (mock)' : 'Pending'}
+                </span>
+              </div>
+            ))}
           </div>
         )}
       </div>
 
-      {orders.length === 0 ? (
-        <div className="text-center py-8">
-          {canCreateOrders ? (
-            <>
-              <p className="text-gray-400 mb-4">Ready to finalize your event budget?</p>
-              <button
-                onClick={onCreateOrders}
-                disabled={processing}
-                className="px-6 py-3 bg-gradient-to-r from-purple-600 to-pink-600 text-white rounded-lg hover:from-purple-700 hover:to-pink-700 transition disabled:opacity-50 disabled:cursor-not-allowed font-medium"
-              >
-                {processing ? '⏳ Processing...' : '💳 Proceed to Payment'}
-              </button>
-              <div className="mt-4 flex items-center justify-center gap-2 text-sm text-gray-500">
-                <span>Powered by</span>
-                <svg className="h-5" viewBox="0 0 98 24" fill="none">
-                  <path d="M20.2 0C9.1 0 0 9.1 0 20.2s9.1 20.2 20.2 20.2 20.2-9.1 20.2-20.2S31.3 0 20.2 0zm0 36.4c-8.9 0-16.2-7.3-16.2-16.2S11.3 4 20.2 4s16.2 7.3 16.2 16.2-7.3 16.2-16.2 16.2z" fill="#5A67D8"/>
-                  <text x="45" y="18" fill="#fff" fontSize="16" fontWeight="bold">Mollie</text>
-                </svg>
-              </div>
-            </>
-          ) : (
-            <p className="text-gray-500">Approve vendors to create orders</p>
-          )}
+      {/* CTA */}
+      {approvedVendors.length === 0 && orders.length === 0 ? (
+        <div className="py-3 text-center text-xs text-gray-400 rounded-xl border border-dashed border-gray-200">
+          Approve vendors above to unlock payment.
+        </div>
+      ) : hasPaid || done ? (
+        <div className="w-full py-3 rounded-xl font-bold text-sm flex items-center justify-center gap-2 cursor-default bg-emerald-50 text-emerald-700 border border-emerald-200">
+          ✓ Ledger Verified (Paid)
         </div>
       ) : (
-        <div className="space-y-3">
-          {orders.map((order) => (
-            <div key={order.id} className="bg-[#0a0a0a] border border-[#2a2a2a] rounded-lg p-4">
-              <div className="flex items-center justify-between mb-2">
-                <div>
-                  <p className="font-medium text-white">Invoice #{order.invoice_ref || order.id.slice(0, 8)}</p>
-                  <p className="text-sm text-gray-400">€{order.amount.toLocaleString()}</p>
-                </div>
-                <span className={`px-3 py-1 rounded-full text-xs font-medium ${getPaymentStatusColor(order.payment_status)}`}>
-                  {order.payment_status.replace('mock_', '')}
-                </span>
-              </div>
-              {order.payment_status === 'mock_paid' && (
-                <div className="mt-2 pt-2 border-t border-[#2a2a2a]">
-                  <p className="text-xs text-green-400">✓ Payment completed via Mollie</p>
-                </div>
-              )}
-            </div>
-          ))}
-        </div>
+        <button onClick={onCreateOrders} disabled={processing}
+          className="w-full font-bold text-sm py-3 rounded-xl transition-colors disabled:opacity-60 flex items-center justify-center gap-2 text-white shadow-sm"
+          style={{ background: processing ? '#9CA3AF' : '#059669', boxShadow: processing ? 'none' : '0 2px 8px rgba(5,150,105,0.25)' }}>
+          {processing
+            ? <><span className="w-4 h-4 border-2 border-white/40 border-t-white rounded-full animate-spin-slow" /> Contacting Gateway…</>
+            : <><span>🛡</span> Approve Mock Payment</>}
+        </button>
       )}
+      <p className="text-center text-[10px] font-mono text-gray-300 mt-2">No real payment is processed.</p>
     </section>
-  );
-}
-
-// Helper functions for status colors
-function getStatusColor(status: string): string {
-  const colors: Record<string, string> = {
-    not_started: 'bg-gray-100 text-gray-800',
-    searching: 'bg-blue-100 text-blue-800',
-    shortlisted: 'bg-yellow-100 text-yellow-800',
-    approved: 'bg-green-100 text-green-800',
-    ordered: 'bg-purple-100 text-purple-800',
-  };
-  return colors[status] || 'bg-gray-100 text-gray-800';
-}
-
-function getVendorStatusColor(status: string): string {
-  const colors: Record<string, string> = {
-    shortlisted: 'bg-yellow-100 text-yellow-800',
-    contacted: 'bg-blue-100 text-blue-800',
-    quoted: 'bg-purple-100 text-purple-800',
-    approved: 'bg-green-100 text-green-800',
-    rejected: 'bg-red-100 text-red-800',
-  };
-  return colors[status] || 'bg-gray-100 text-gray-800';
-}
-
-function getResponseColor(response: string): string {
-  const colors: Record<string, string> = {
-    yes: 'bg-green-100 text-green-800',
-    no: 'bg-red-100 text-red-800',
-    maybe: 'bg-yellow-100 text-yellow-800',
-  };
-  return colors[response] || 'bg-gray-100 text-gray-800';
-}
-
-function getPaymentStatusColor(status: string): string {
-  const colors: Record<string, string> = {
-    mock_pending: 'bg-yellow-100 text-yellow-800',
-    mock_paid: 'bg-green-100 text-green-800',
-    mock_failed: 'bg-red-100 text-red-800',
-  };
-  return colors[status] || 'bg-gray-100 text-gray-800';
-}
-
-// Made with Bob
-
-function PaymentModal({ 
-  isOpen, 
-  onClose, 
-  processing 
-}: { 
-  isOpen: boolean; 
-  onClose: () => void; 
-  processing: boolean;
-}) {
-  if (!isOpen) return null;
-
-  return (
-    <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-50 p-4">
-      <div className="bg-[#1a1a1a] border border-[#2a2a2a] rounded-lg max-w-md w-full p-6">
-        <div className="text-center">
-          {processing ? (
-            <>
-              <div className="mb-4">
-                <div className="w-16 h-16 bg-gradient-to-r from-purple-600 to-pink-600 rounded-full mx-auto flex items-center justify-center animate-pulse">
-                  <span className="text-2xl">💳</span>
-                </div>
-              </div>
-              <h3 className="text-xl font-bold text-white mb-2">Processing Payment</h3>
-              <p className="text-gray-400 mb-4">Securely processing your payment via Mollie...</p>
-              <div className="flex items-center justify-center gap-2 text-sm text-gray-500">
-                <span>Powered by</span>
-                <span className="font-bold text-purple-400">Mollie</span>
-              </div>
-            </>
-          ) : (
-            <>
-              <div className="mb-4">
-                <div className="w-16 h-16 bg-green-600 rounded-full mx-auto flex items-center justify-center">
-                  <svg className="w-8 h-8 text-white" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M5 13l4 4L19 7" />
-                  </svg>
-                </div>
-              </div>
-              <h3 className="text-xl font-bold text-white mb-2">Payment Successful!</h3>
-              <p className="text-gray-400 mb-6">Your orders have been created and payment processed.</p>
-              <button
-                onClick={onClose}
-                className="w-full px-4 py-2 bg-gradient-to-r from-purple-600 to-pink-600 text-white rounded-lg hover:from-purple-700 hover:to-pink-700 transition"
-              >
-                Continue
-              </button>
-            </>
-          )}
-        </div>
-      </div>
-    </div>
   );
 }

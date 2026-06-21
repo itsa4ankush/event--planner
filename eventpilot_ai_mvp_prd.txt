@@ -1,0 +1,354 @@
+EventPilot AI — Hackathon MVP PRD
+
+Multi-Agent Event Planning Assistant
+Solo build · 12 hours · Submit target 10:00 AM CET (hard deadline 12:00 PM) · Started 9:15 PM CET
+
+------------------------------------------------------------------------
+
+0. TL;DR
+
+EventPilot AI is a multi-agent system that turns a vague event idea (“FIFA World Cup viewing party, 50 people, my backyard”) into a structured plan: reasoned requirements, ranked vendor shortlist, a generated e-invite with RSVP tracking, a weather/legal/cost briefing, and a mock vendor-approval/payment flow — all on one dashboard.
+
+Primary demo path (the thing that must work on stage):
+Intake Q&A → Orchestrator reasons categories → Vendor Agent shortlists + ranks → user approves → Communication Agent makes one real Vapi call to confirm a quote → Invite Agent generates image + 10s video + RSVP page → guests RSVP → Cost/Weather/Legal Agent shows budget + forecast + guidance → user mock-approves an order/payment → Dashboard shows it all.
+
+------------------------------------------------------------------------
+
+1. Lean MVP Definition
+
+1.1 Must-have for the demo (cannot cut)
+
+  ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
+  #                       Capability                                                                                                       Why it’s non-negotiable
+  ----------------------- ---------------------------------------------------------------------------------------------------------------- -------------------------------------------------------------------------------------------------------------------------------
+  1                       Event intake Q&A that produces a structured event brief                                                          This is the “wow, it understood me” moment
+
+  2                       At least one category (e.g. Food & Drinks) fully shortlisted with real-looking vendors, sorted by review score   Proves the multi-source vendor ranking story
+
+  3                       One real outbound Vapi call (can call the organizer’s own phone or a teammate as a stand-in “vendor”)            This is the one tool from the PDF that’s hardest to fake convincingly — do it live, don’t mock it
+
+  4                       One PixVerse-generated invite image + short video                                                                Visually the most impressive deliverable per minute of judge attention
+
+  5                       RSVP page with QR code, capturing name/response/contact/comment                                                  Closes the loop — shows end-to-end, not just generation
+
+  6                       Cost/Weather/Legal panel powered by Cala + a weather API                                                         Differentiator vs. a generic “AI event planner”
+
+  7                       Dashboard tying all of the above together with vendor status (approved/rejected) and a budget number             This is literally “the product” — without it, you have five demos, not one
+
+  8                       Conversational intake works via both typed text and live voice (Vapi speech-to-text)                             Shows Vapi isn’t just used for outbound calls — it’s a true conversational interface
+
+  9                       Organizer can enter any phone number to trigger a real demo vendor-enquiry call (Vapi)                           Decouples the “real call” wow-moment from needing an actual cooperative vendor — much lower risk than calling a real business
+
+  10                      Generated e-invite (image + video) is downloadable and has a shareable link/QR for guests                        Proves the invite is actually usable outside the app, not just a demo screenshot
+
+  11                      Mock payment screen visually styled “Powered by Mollie”                                                          Sells the “payments in one place” story without any real payment-integration risk
+  ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
+
+1.2 Nice-to-have (build only if ahead of schedule)
+
+-   Multiple KPI categories fully populated (venue, decorations, photography) vs. just 1–2 demoed deeply
+-   Real Mollie test-mode payment link instead of a static mock screen
+-   Multi-turn negotiation logic in the voice call (vs. a single scripted ask)
+-   B2C-flavored example pre-loaded alongside the B2B one
+
+1.3 Explicitly out of scope for MVP
+
+-   Real email sending/automation (simulated log entries only)
+-   Real vendor fulfillment/delivery tracking
+-   Multi-currency, multi-language
+-   Auth beyond a single demo organizer account
+-   Permit/noise legal content beyond a short, clearly-labeled “consider these” list (no jurisdiction-specific legal accuracy guarantee)
+
+1.4 Success criteria
+
+A judge can watch one ~4 minute walkthrough and see: intake → reasoning → real voice call → generated invite/video → RSVP → cost/weather panel → mock approval, all inside one dashboard, without you tabbing into raw API consoles to “explain what would happen.”
+
+------------------------------------------------------------------------
+
+2. Multi-Agent Architecture (Level 2: coordinated specialist agents)
+
+                             ┌─────────────────────────┐
+                             │   Orchestrator / Intake  │
+                             │   Agent (entry point)    │
+                             └────────────┬─────────────┘
+                                          │ structured EventBrief
+                  ┌───────────────────────┼───────────────────────┬─────────────────────────┐
+                  ▼                       ▼                       ▼                         ▼
+       ┌────────────────────┐  ┌─────────────────────┐  ┌──────────────────────┐  ┌────────────────────────┐
+       │ Vendor Research     │  │ Communication Agent │  │ Invite & RSVP Agent  │  │ Cost/Weather/Legal      │
+       │ Agent               │  │ (Vapi)              │  │ (PixVerse)           │  │ Intelligence Agent (Cala)│
+       │ Google+Yelp+Amazon  │  │ Real outbound calls │  │ Image + 10s video    │  │ Cost/labor/legal facts  │
+       │ search + ranking    │  │ to shortlisted      │  │ + QR RSVP page       │  │ + weather forecast      │
+       └─────────┬───────────┘  │ vendors             │  └──────────┬───────────┘  └──────────┬──────────────┘
+                 │              └─────────┬────────────┘             │                          │
+                 ▼                        ▼                          ▼                          ▼
+            Vendor table          VendorQuote table            Invite + Guest tables      WeatherLegalReport table
+                 │                        │                          │                          │
+                 └────────────────────────┴──────────────────────────┴──────────────────────────┘
+                                                  ▼
+                                      ┌───────────────────────────┐
+                                      │ Payment/Order Agent (mock) │
+                                      │ Mollie-style approval flow │
+                                      └─────────────┬───────────────┘
+                                                    ▼
+                                       ┌─────────────────────────┐
+                                       │  Unified Event Dashboard │
+                                       │  (Base44 frontend)        │
+                                       └─────────────────────────┘
+
+Intake input modes: the Orchestrator accepts both typed text and live voice (transcribed via Vapi speech-to-text) for the entire Q&A — date, location, guest count, theme, budget, etc. — using identical extraction logic regardless of channel.
+
+Communication Agent now also handles a pitch-demo call: separate from any vendor outreach, the organizer can enter a phone number live on stage and Vapi places a real outbound call to it running a vendor-enquiry script — this showcases the conversational-calling capability without depending on a real vendor answering.
+
+Why Level 2 and not Level 1 (single agent + tools): each specialist agent owns a distinct external system (search ranking, telephony, generative media, structured knowledge) with its own retry/fallback logic. A single agent juggling all four tool calls in one prompt loop is more failure-prone live on stage. The Orchestrator only ever talks to specialists, never calls Vapi/PixVerse/Cala directly.
+
+Handoff contract: every specialist agent reads/writes through the database (Section 4), not direct agent-to-agent messaging. This is the simplest pattern to build solo in 12 hours and it doubles as your audit trail / dashboard data source for free.
+
+------------------------------------------------------------------------
+
+3. Detailed PRD
+
+3.1 Problem statement
+
+Planning even a mid-size event (50-person watch party, corporate offsite, birthday) requires juggling requirement-gathering, vendor research, price comparison, outreach, invites, RSVPs, weather/logistics risk, and payments — usually across 6+ disconnected tools and phone calls. EventPilot AI consolidates this into one guided, agent-driven flow.
+
+3.2 Target user
+
+-   Primary (B2B): small companies/teams organizing corporate events, offsites, hackathons, launch parties — values speed, vendor comparison, and an auditable status board.
+-   Secondary (B2C): individuals organizing private parties/watch parties — values guided Q&A and the invite/RSVP experience.
+
+3.3 Core user story (reference scenario)
+
+  “I want to host a FIFA World Cup viewing party in my backyard for 50 people.”
+
+1.  Organizer enters this in plain language.
+2.  Orchestrator infers required categories (food, drinks, snacks, seating/AV, decorations, merch/jerseys) and asks targeted follow-ups: which teams/tournament stage, indoor/outdoor, budget range, date/location.
+3.  Vendor Research Agent searches Google/Yelp/Amazon-scoped sources for jersey/merch sellers and catering/drinks vendors near the location, ranks by review score + proximity + stated availability for the event date.
+4.  Organizer reviews shortlist, approves a subset.
+5.  Communication Agent places a real call (Vapi) to the top vendor to confirm price/availability; logs outcome to the Vendor record.
+6.  Invite & RSVP Agent generates an image + 10s video invite and a shareable RSVP link/QR code.
+7.  Guests RSVP with name, yes/no/maybe, contact, and comments (dietary, +1s).
+8.  Cost/Weather/Legal Agent (Cala + weather API) returns: budget estimate, forecasted temperature/conditions for the date, a short “things to consider” list (permits/noise — superficial only), and optional alt-date or dress-code suggestions if weather looks bad.
+9.  Organizer mock-approves the order; Payment/Order Agent shows a simulated Mollie checkout and marks vendor status approved.
+10. Dashboard shows everything: KPI categories, vendor statuses, budget, RSVP count, invite preview.
+
+3.4 Functional requirements by module
+
+Intake/Orchestrator
+- FR1: Accept free-text event description, extract event type, guest count, location, date.
+- FR2: Infer relevant KPI categories (venue, food & drinks, decorations, photography, entertainment, merch) based on event type.
+- FR3: Ask up to 3–5 targeted follow-up questions (event-type-specific, e.g. teams/tournament for sports events).
+- FR4: Persist resulting EventBrief and create KPI category records with status not_started.
+- FR4a: Support both typed text and live voice input (transcribed via Vapi speech-to-text) for the entire intake conversation; the same question/extraction logic applies regardless of input mode, with a simple toggle for the organizer to switch between them.
+
+Vendor Research Agent
+- FR5: For each approved category, run web search scoped to “Google/Yelp/Amazon” signals (ratings, review count, distance, stated availability).
+- FR6: Rank vendors by a composite score (weights: rating, review count, availability match, proximity) — must support “100% reviews basis” mode the user described (rating-driven sort) as the default.
+- FR7: Present shortlist (name, contact, rating, price estimate, source) for organizer approve/reject per vendor.
+
+Communication Agent (Vapi)
+- FR8: Prompt the organizer to enter a contact phone number; place a real outbound Vapi call to that number running a scripted vendor-enquiry conversation (price, availability, delivery timeline) — this is a pitch-demo mechanism, not a call to an actual vendor, and the UI should label it as such.
+- FR9: Log call transcript/summary and extracted quote fields to VendorQuote.
+- FR10: Other (non-demoed) vendors keep a simulated “outreach sent” status for demo continuity — no real calls are placed to them.
+
+Invite & RSVP Agent (PixVerse)
+- FR11: Generate one still image and one ≤10s video invite from event details (theme, date, location).
+- FR12: Generate a unique RSVP page + QR code per event.
+- FR12a: Provide Download buttons for the generated image and video files, and a shareable link (copy-to-clipboard / native share) so the organizer can send the invite directly to guests outside the app.
+- FR13: Collect RSVP entries: name, response, contact, free-text comment (dietary/guests/etc.), timestamp.
+- FR14: Show live RSVP count/list on dashboard.
+
+Cost/Weather/Legal Intelligence Agent (Cala)
+- FR15: Query Cala for relevant structured facts (e.g. typical labor/vendor cost ranges, general legal categories like permits/noise ordinances) tied to event type/location, presented as superficial, “consider this” guidance only — explicitly not legal advice.
+- FR16: Query a weather API for forecasted conditions on the event date/location.
+- FR17: Produce a budget estimate combining vendor quotes + Cala cost references.
+- FR18: If forecast is poor (rain/extreme temp) for an outdoor event, surface alt-date suggestions and dress-code/expectation notes.
+
+Payment/Order Agent (mock — visual only)
+- FR19: Present a purely visual checkout mock-up summarizing approved vendor costs, styled with Mollie branding and a clear “Powered by Mollie” label — no real Mollie API call is made.
+- FR20: On “approve,” mark vendor status approved (else rejected) and store a mock invoice record.
+
+Dashboard
+- FR21: Single view per event showing: KPI category progress, vendor list with status, budget estimate, RSVP list/count, invite preview, weather/legal panel.
+
+3.5 Non-functional requirements
+
+-   Demo must run end-to-end in under ~5 minutes without manual console intervention.
+-   All external API failures must degrade to a clearly-labeled mock/fallback value rather than crashing the flow (critical given 12-hour build risk).
+-   No PII beyond what’s needed for the demo (use placeholder/consented data for the live call).
+
+3.6 Out of scope
+
+See Section 1.3.
+
+------------------------------------------------------------------------
+
+4. Database Schema
+
+  Built inside Base44’s native data layer (or Postgres if you eject). Field types are indicative.
+
+  ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
+  Table                               Key Fields
+  ----------------------------------- ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
+  Organizer                           id, name, email, phone, company (nullable), created_at
+
+  Event                               id, organizer_id, title, event_type (enum), date, time, location_text, lat, lng, guest_count, budget_total, status (draft/planning/confirmed/completed), created_at
+
+  EventBriefAnswer                    id, event_id, question_key, answer_value (text/jsonb), input_mode (voice/text) — stores Q&A from intake
+
+  KpiCategory                         id, event_id, name (venue/food_drinks/decor/photography/merch/entertainment), status (not_started/searching/shortlisted/approved/ordered)
+
+  Vendor                              id, kpi_category_id, name, contact_email, contact_phone, source (google/yelp/amazon), rating, review_count, price_estimate, available_date, profile_url, status (shortlisted/contacted/quoted/approved/rejected)
+
+  VendorQuote                         id, vendor_id, channel (voice_call/simulated_email), transcript_or_notes, quoted_price, delivery_timeline, outcome, created_at
+
+  Invite                              id, event_id, image_url, video_url, qr_code_url, share_url, message_text, created_at
+
+  Guest                               id, event_id, invite_id, name, contact, response (yes/no/maybe), comments, responded_at
+
+  WeatherLegalReport                  id, event_id, forecast_temp, forecast_condition, alt_date_suggestions (jsonb), legal_notes (jsonb), dress_code_recommendation, generated_at
+
+  Order                               id, event_id, vendor_id, amount, payment_status (mock_pending/mock_paid), invoice_ref, created_at
+  ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
+
+Relationships: Organizer 1→N Event; Event 1→N KpiCategory; KpiCategory 1→N Vendor; Vendor 1→N VendorQuote; Event 1→N Guest (via Invite); Event 1→1 WeatherLegalReport; Event 1→N Order.
+
+------------------------------------------------------------------------
+
+5. Agent Design
+
+  --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
+  Agent                  Trigger                                                  Inputs                                        Outputs                                                   Primary Tool(s)                                Fallback if tool fails
+  ---------------------- -------------------------------------------------------- --------------------------------------------- --------------------------------------------------------- ---------------------------------------------- -----------------------------------------------------------------------
+  Orchestrator/Intake    New event created                                        Free-text OR voice description (Vapi STT)     EventBrief, KpiCategory rows, follow-up questions         LLM (Claude) prompt chain + Vapi STT           N/A — core logic; if STT fails, fall back to text input
+
+  Vendor Research        Organizer confirms categories                            KpiCategory + location/date                   Ranked Vendor rows                                        Web search (see Section 6)                     Pre-seeded sample vendor dataset per category
+
+  Communication          Organizer enters a phone number for the live demo call   Organizer-entered phone number, demo script   VendorQuote-style row, call transcript                    Vapi                                           If the call fails to connect, show the backup-recorded demo call clip
+
+  Invite & RSVP          Organizer finalizes event details                        Event theme/date/location                     Invite (image+video+QR+download+share link), Guest rows   PixVerse + QR lib + share/download UI          Use a static branded template image if generation times out
+
+  Cost/Weather/Legal     After vendors shortlisted                                Event type/location/date, vendor quotes       WeatherLegalReport, budget estimate                       Cala + weather API                             Use cached/static seasonal averages + generic guidance text
+
+  Payment/Order (mock)   Organizer clicks approve                                 Approved vendors + amounts                    Order rows, payment_status                                Static UI, “Powered by Mollie” branding only   Pure visual mock — no Mollie API call, ever
+  --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
+
+------------------------------------------------------------------------
+
+6. Tool Integrations
+
+  ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
+  Tool (from provided stack)   Module it powers                                                                                                                                         Integration notes
+  ---------------------------- -------------------------------------------------------------------------------------------------------------------------------------------------------- --------------------------------------------------------------------------------------------------------------------------------------------------------------------------
+  Base44                       Entire app shell: dashboard, RSVP page, auth, hosting, DB                                                                                                Prompt it to scaffold: Event model + dashboard + RSVP public page first; this is your fastest path to a clickable demo
+
+  Devin                        Meta dev tool — writes/debugs the custom backend agent logic (Orchestrator reasoning, ranking algorithm, API glue) that Base44 can’t natively generate   Use it as your pair-programmer for the trickiest integration code (Vapi webhook handling, Cala query formatting) — not part of the runtime product
+
+  Vapi                         Communication Agent (live demo call) + Orchestrator/Intake (voice input mode)                                                                            Two uses: (1) speech-to-text for the intake conversation, (2) one outbound call to an organizer-entered phone number running a vendor-enquiry script, logged via webhook
+
+  PixVerse                     Invite & RSVP Agent                                                                                                                                      Text-prompt → image + ≤10s video; cache the result, don’t regenerate per RSVP page view
+
+  Cala                         Cost/Weather/Legal Agent (cost/legal facts)                                                                                                              Query for cost-reference and permit/noise category facts only — keep this surface-level per your stated scope
+  ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
+
+Supplementary tools needed to close gaps (not in the provided PDF, recommended for speed):
+| Tool | Why needed |
+|—|—|
+| Web search (Claude’s built-in search, or SerpAPI) | No dedicated Google/Yelp/Amazon API was provided — this is the fastest legal way to approximate that ranking signal in 12 hours |
+| Open-Meteo (free, no API key) | Weather forecast input for the Cost/Weather/Legal Agent |
+| A QR code JS library (e.g. qrcode npm package) | RSVP QR generation — trivial, keep it client-side |
+| Mollie brand assets (logo/wordmark only) | No API/sandbox integration needed — MVP payment step is a static, “Powered by Mollie”-branded visual mock only |
+
+------------------------------------------------------------------------
+
+7. Build Phases
+
+  -----------------------------------------------------------------------------------------------------------------------------------------------------------------------
+  Phase                                   Time-box                Deliverable
+  --------------------------------------- ----------------------- -------------------------------------------------------------------------------------------------------
+  1. Setup                                30 min                  Accounts/keys for Vapi, PixVerse, Cala confirmed working; Base44 project created
+
+  2. App scaffold                         60 min                  Base44-generated dashboard shell, data models, public RSVP page stub
+
+  3. Intake/Orchestrator (text + voice)   75 min                  Working Q&A flow (typed AND Vapi-STT voice) producing EventBrief + KpiCategory rows
+
+  4. Vendor Research Agent                90 min                  Web-search-backed ranked vendor list rendering in dashboard
+
+  5. Cost/Weather/Legal Agent             60 min                  Cala + weather API wired, budget + forecast panel live
+
+  6. Invite & RSVP Agent (shareable)      75 min                  PixVerse image+video generated; download buttons, shareable link/QR, and RSVP capture all working
+
+  7. Communication Agent (demo call)      45 min                  Organizer-entered phone number triggers one real Vapi call end-to-end, transcript logged to dashboard
+
+  8. Payment/Order mock (visual only)     45 min                  “Powered by Mollie” checkout mock-up; approve/reject flow updates vendor + order status
+
+  9. Integration + debugging              75 min                  Full happy path runs without manual intervention
+
+  10. Polish + demo prep                  60 min                  Seed realistic demo data, rehearse script
+
+  11. Buffer                              60 min                  Absorb overruns from phases 4/7 (highest-risk)
+
+  Total                                   ~11h 15m                Plus ~90 min in the execution timeline for backup video recording + submission buffer (see Section 9)
+  -----------------------------------------------------------------------------------------------------------------------------------------------------------------------
+
+------------------------------------------------------------------------
+
+8. One-Person Hour Estimates (summary)
+
+  Workstream                                     Hours
+  ---------------------------------------------- ---------------------
+  App shell (Base44)                             1.5
+  Orchestrator/Intake logic (text + voice)       1.25
+  Vendor Research + ranking                      1.5
+  Cost/Weather/Legal integration                 1.0
+  Invite/RSVP (PixVerse + download/share + QR)   1.25
+  Communication Agent (Vapi demo call)           0.75
+  Payment/Order mock (visual, Mollie-branded)    0.75
+  Integration, debugging, testing                1.25
+  Polish, demo data, rehearsal                   1.0
+  Buffer/contingency                             1.0
+  Total                                          ~11h 15m core build
+
+------------------------------------------------------------------------
+
+9. Hackathon Execution Plan (timeline)
+
+  ---------------------------------------------------------------------------------------------------------------------------------------
+  Time (CET)                          Action
+  ----------------------------------- ---------------------------------------------------------------------------------------------------
+  21:15 – 21:45                       Setup: API keys, Base44 project, repo
+
+  21:45 – 22:45                       Base44 scaffold: models + dashboard shell + RSVP page stub
+
+  22:45 – 00:00                       Orchestrator/Intake flow — text + voice (Vapi STT)
+
+  00:00 – 01:30                       Vendor Research Agent (highest-risk module — start while fresh)
+
+  01:30 – 02:30                       Cost/Weather/Legal Agent
+
+  02:30 – 03:45                       Invite & RSVP Agent — generation + download/share + QR
+
+  03:45 – 04:30                       Communication Agent — enter-a-number demo call, test it now, not at 6 AM
+
+  04:30 – 05:15                       Payment/Order mock — “Powered by Mollie” visual checkout
+
+  05:15 – 06:30                       Full integration + bug fixing
+
+  06:30 – 07:30                       Polish, seed demo data
+
+  07:30 – 08:30                       Buffer for whatever broke
+
+  08:30 – 09:30                       Record backup demo video (insurance against live-demo/API flakiness)
+
+  09:30 – 10:00                       Final check, write submission text, submit (2-hour buffer remains before the 12:00 hard deadline)
+  ---------------------------------------------------------------------------------------------------------------------------------------
+
+De-scope triggers (decide fast, don’t sunk-cost):
+- If Vendor Research isn’t ranking real-looking data by 01:00 → fall back to a seeded sample dataset for 2 categories and move on.
+- If the Vapi demo call isn’t connecting by 04:15 → fall back to the backup-recorded call clip. This risk is now lower than the original “cold-call a real vendor” plan since you control both ends of the call — but still test it once early in Phase 7, don’t leave it for game time.
+- If voice-mode intake (Vapi STT) is flaky → keep it as a secondary input option and default the live demo to text mode; voice is a bonus, not the backbone.
+- If PixVerse generation is slow/flaky → generate assets early and cache; never regenerate live during the demo.
+
+------------------------------------------------------------------------
+
+Note: legal/permit/labor-law content surfaced by the Cost/Weather/Legal Agent is informational and superficial by design — it should be presented to the organizer as “things to consider,” not as compliance advice.

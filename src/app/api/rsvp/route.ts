@@ -26,9 +26,9 @@ export async function POST(request: NextRequest) {
       );
     }
 
-    // Get or create invite for this event
-    const invites = db.invites.findByEvent(eventId);
-    const inviteId = (invites && Array.isArray(invites) && invites.length > 0) ? invites[0].id : 'direct-rsvp';
+    // Get invite for this event
+    const existingInvite = db.invites.findByEvent(eventId);
+    const inviteId = existingInvite?.id || 'direct-rsvp';
     
     // Create guest RSVP
     const guest = db.guests.create({

@@ -1,0 +1,747 @@
+================================================================================
+  ANTHEA AI — EVENT PLANNER
+  Complete Functionality & Detailed Flow Documentation
+  Generated: June 2026
+================================================================================
+
+
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+  1. PROJECT OVERVIEW
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+Anthea is a multi-agent AI event planning system built as a hackathon MVP.
+The core idea: a user describes their event in a single sentence (e.g. "FIFA
+World Cup watch party, 50 guests, my backyard, June 21") and Anthea's six
+AI agents automatically handle everything — vendor sourcing, voice calls,
+invite generation, weather/legal briefing, RSVPs, and mock payment — in one
+unified dashboard.
+
+Application URL:    http://localhost:3000
+Framework:          Next.js 16 (App Router, Turbopack)
+Language:           TypeScript
+Styling:            Tailwind CSS v4 + custom CSS variables
+Data Storage:       In-memory singleton store (no external database)
+Deployment target:  Vercel / Node.js
+
+
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+  2. TECHNOLOGY STACK & THIRD-PARTY INTEGRATIONS
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+CORE FRAMEWORK
+  • Next.js 16 — App Router, Server Components, API Routes
+  • TypeScript — strict typing throughout all agents and routes
+  • Tailwind CSS v4 — utility-first styling with CSS custom properties
+  • Turbopack — fast dev bundler (root restricted to project dir)
+
+AI & VOICE
+  • Vapi (https://vapi.ai)
+    - Outbound AI voice calls to vendors
+    - Real-time speech-to-text for conversational intake
+    - In MVP: demo/simulation mode when API key is absent
+    - Real mode: GPT-4 + ElevenLabs voice via Vapi's infrastructure
+
+  • PixVerse (https://pixverse.ai)
+    - Text-to-image/video AI generation for event invites
+    - API: POST https://app-api.pixverse.ai/openapi/v2/video/text/generate
+    - Polling: GET  https://app-api.pixverse.ai/openapi/v2/video/result/{id}
+    - Fallback: SVG template invite when credits are exhausted (ErrCode 500090)
+
+WEATHER & INTELLIGENCE
+  • Open-Meteo (https://api.open-meteo.com) — free, no API key required
+    - Daily forecast: temperature, precipitation, wind speed, weather code
+    - WMO weather code interpretation (clear → thunderstorm)
+    - Fallback: seasonal Amsterdam averages when API unavailable
+
+PAYMENTS
+  • Mollie (https://mollie.com) — mock/visual only for MVP
+    - Branded checkout UI with iDEAL, credit card, Bancontact, PayPal options
+    - No real payment is processed; orders auto-complete as "mock_paid"
+    - Invoice reference format: INV-{eventId[0:8]}-{timestamp}
+
+QR CODES
+  • api.qrserver.com — free, no key required
+    - Generates 300×300 QR code pointing to the RSVP share URL
+
+COST INTELLIGENCE (OPTIONAL)
+  • Cala API (https://api.cala.com) — integrated but not active without key
+    - Provides detailed cost breakdowns; falls back to manual calculation
+
+
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+  3. APPLICATION PAGES
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+  PAGE                  ROUTE                   PURPOSE
+  ─────────────────────────────────────────────────────────────────────
+  Landing Page          /                       Marketing + entry points
+  Intake / Chat         /intake                 Conversational event setup
+  Dashboard             /dashboard?eventId=...  Unified agent control panel
+  RSVP                  /rsvp/[inviteId]        Guest RSVP form (public)
+
+
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+  4. MULTI-AGENT ARCHITECTURE
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+All agents extend a common BaseAgent class (src/agents/base-agent.ts) which
+provides: structured logging, success/error result wrappers, and a shared
+execute() interface.
+
+  AGENT                     FILE                          RESPONSIBILITY
+  ──────────────────────────────────────────────────────────────────────────
+  1. OrchestratorAgent      orchestrator-agent.ts         Conversational intake
+  2. VendorResearchAgent    vendor-research-agent.ts      Vendor sourcing & ranking
+  3. CommunicationAgent     communication-agent.ts        Vapi voice calls
+  4. InviteRsvpAgent        invite-rsvp-agent.ts          Invite generation + RSVPs
+  5. CostWeatherLegalAgent  cost-weather-legal-agent.ts   Intelligence report
+  6. PaymentOrderAgent      payment-order-agent.ts        Mock Mollie checkout
+
+All agents operate on the same in-memory store singleton (src/lib/db/store.ts)
+within a single Node.js process. State is lost on server restart.
+
+
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+  5. DATA MODELS (src/lib/db/schema.ts)
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+  Event
+    id, organizer_id, title, event_type, date, time, location_text,
+    lat, lng, guest_count, budget_total, status (draft→planning→confirmed→completed)
+
+  Event Types: corporate | sports_viewing | birthday | wedding | conference | other
+
+  KpiCategory
+    id, event_id, name, status (not_started→searching→shortlisted→approved→ordered)
+    Names: venue | food_drinks | decor | photography | merch | entertainment | av_equipment
+
+  Vendor
+    id, kpi_category_id, name, contact_email, contact_phone,
+    source (google|yelp|amazon|manual), rating, review_count,
+    price_estimate, available_date, status (shortlisted→contacted→quoted→approved→rejected)
+
+  VendorQuote
+    id, vendor_id, channel (voice_call|simulated_email|manual),
+    transcript_or_notes, quoted_price, delivery_timeline,
+    outcome (pending|accepted|declined|negotiating)
+
+  Invite
+    id, event_id, image_url (PixVerse or SVG fallback), video_url,
+    qr_code_url, share_url (/rsvp/{eventId}), message_text
+
+  Guest
+    id, event_id, invite_id, name, contact, response (yes|no|maybe), comments
+
+  WeatherLegalReport
+    id, event_id, forecast_temp, forecast_condition, forecast_precipitation,
+    forecast_wind_speed, legal_notes[], cost_estimate
+
+  Order
+    id, event_id, vendor_id, amount, payment_status (mock_pending|mock_paid|mock_failed),
+    invoice_ref
+
+
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+  6. API ENDPOINTS
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+  METHOD  ENDPOINT                          AGENT CALLED          PURPOSE
+  ──────────────────────────────────────────────────────────────────────────────
+  POST    /api/intake                       OrchestratorAgent     Process chat message
+  GET     /api/events/{eventId}             —                     Load full event data
+  POST    /api/vendors/search               VendorResearchAgent   Find & rank vendors
+  PATCH   /api/vendors/{vendorId}           —                     Update vendor status
+  POST    /api/vendors/{vendorId}/call      CommunicationAgent    AI voice call to vendor
+  POST    /api/demo-call                    CommunicationAgent    Test outbound call (any #)
+  POST    /api/intelligence                 CostWeatherLegalAgent Weather + cost report
+  POST    /api/invites/generate             InviteRsvpAgent       Generate AI invite
+  POST    /api/rsvp                         —                     Submit guest RSVP
+  POST    /api/orders/create                PaymentOrderAgent     Mock payment checkout
+
+
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+  7. IMPLEMENTED FEATURES — DETAILED FLOWS
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+
+  ╔══════════════════════════════════════════════════════════════════════════╗
+  ║  FEATURE 1 — CONVERSATIONAL EVENT INTAKE                               ║
+  ║  Agent: OrchestratorAgent   Route: POST /api/intake                    ║
+  ╚══════════════════════════════════════════════════════════════════════════╝
+
+  PURPOSE
+    Collects all event details through a natural conversation — text or
+    voice — without requiring the user to fill a form.
+
+  REQUIRED FIELDS
+    title, event_type, date, location_text, guest_count
+    Optional: time, budget_total
+
+  FLOW
+    Step 1 — User opens /intake
+      • Chat loads with Anthea's greeting message
+      • Input cursor auto-focused; user can type or switch to voice mode (🎤)
+
+    Step 2 — First message
+      • User sends a free-form message, e.g.:
+          "FIFA World Cup watch party, 50 guests, my backyard"
+      • Frontend: POST /api/intake { message, inputMode:"text", organizerId }
+      • OrchestratorAgent.extractEventDetails() parses the message:
+          - event_type: pattern match ("watch party", "fifa" → sports_viewing)
+          - guest_count: regex (\d+ guests → 50)
+          - location: pattern "in [place]" / "at [place]" / "backyard" → captured
+          - date/budget: extracted if mentioned with numbers
+
+    Step 3 — Follow-up questions
+      • getMissingFields() checks which of the 5 required fields are absent
+      • For each missing field, generateFollowUpQuestion() returns a prompt:
+          "What would you like to call this event?"
+          "When is the event? (e.g. 2026-07-15)"
+          "How many guests are you expecting?"
+      • Each answer is saved to db.eventBriefAnswers with question_key + input_mode
+      • Conversation state is tracked per session in a Map<stateKey, state>
+
+    Step 4 — Completion
+      • When all 5 required fields are collected:
+          - db.events.create() creates the Event record
+          - inferCategories(event_type) maps event type to vendor categories:
+              sports_viewing → [food_drinks, av_equipment, merch, decor]
+              wedding        → [venue, food_drinks, decor, photography, entertainment]
+              corporate      → [venue, food_drinks, av_equipment, photography]
+              birthday       → [venue, food_drinks, decor, entertainment]
+          - KpiCategory records created for each inferred category
+          - Response: "Perfect! Your FIFA Watch Party is set for June 21…"
+          - isComplete: true returned to frontend
+
+    Step 5 — Redirect
+      • Frontend detects isComplete + eventId in response
+      • After 1.8s delay: router.push(/dashboard?eventId={id})
+
+  VOICE INPUT
+    • Toggle button in header switches inputMode to "voice"
+    • Uses Web Speech API (SpeechRecognition) — Chrome/Edge only
+    • On "Tap to speak": recognition.start() activates microphone
+    • onresult fires → transcript sent to submitMessage() same as text
+    • Voice mode label (🎤 voice) shown below the user's message bubble
+
+  DATE PARSING FORMATS SUPPORTED
+    • ISO:          2026-07-15
+    • US:           07/15/2026
+    • European:     15-07-2026 or 15.07.2026
+    • Relative:     "tomorrow", "next week"
+
+
+  ╔══════════════════════════════════════════════════════════════════════════╗
+  ║  FEATURE 2 — SMART VENDOR RESEARCH & RANKING                           ║
+  ║  Agent: VendorResearchAgent   Route: POST /api/vendors/search          ║
+  ╚══════════════════════════════════════════════════════════════════════════╝
+
+  PURPOSE
+    Source and rank top vendors for every KPI category inferred from the
+    event type, sorted by a composite quality score.
+
+  FLOW
+    Step 1 — Trigger
+      • User clicks "Find Vendors" button on dashboard (or it auto-triggers)
+      • POST /api/vendors/search { eventId }
+      • Route loads event + all kpiCategories from store
+
+    Step 2 — Per-category search
+      • For each KpiCategory, VendorResearchAgent.execute() is called
+      • buildSearchQuery() constructs intent string:
+          food_drinks    → "catering food beverage service near {location}"
+          av_equipment   → "audio visual equipment rental near {location}"
+          venue          → "event venue space rental near {location}"
+          (etc.)
+      • searchVendors() attempts real web search → currently throws (TODO)
+      • Fallback: getMockVendorsForCategory() loads from
+          src/lib/mock-data/vendors.ts (curated set per category)
+
+    Step 3 — Composite scoring algorithm
+      Each vendor is scored out of 100:
+        Rating weight    50% → (rating / 5.0) × 50
+        Review count     30% → log-normalized, capped at 1,000 reviews
+        Availability     10% → +10 if available before event date, +5 maybe, +7 unknown
+        Price            10% → lower price = higher score (range €500–€5,000)
+
+      Vendors sorted descending by score → top 5 per category kept
+
+    Step 4 — Persist & return
+      • db.vendors.create() for each ranked vendor with status: "shortlisted"
+      • KpiCategory status updated to "shortlisted"
+      • Dashboard renders vendor table with columns:
+          Vendor Name | Source | Rating | Est. Cost | Actions/Status
+
+    Step 5 — Approve / Reject
+      • PATCH /api/vendors/{vendorId} { status: "approved"|"rejected" }
+      • Approved vendors unlock the voice call button and checkout pipeline
+
+
+  ╔══════════════════════════════════════════════════════════════════════════╗
+  ║  FEATURE 3 — LIVE AI VOICE CALLS (VAPI)                                ║
+  ║  Agent: CommunicationAgent   Routes: /api/vendors/{id}/call,           ║
+  ║                                       /api/demo-call                   ║
+  ╚══════════════════════════════════════════════════════════════════════════╝
+
+  PURPOSE
+    Make real outbound AI voice calls to approved vendors to obtain quotes
+    and availability confirmations, without the organizer needing to call.
+
+  FLOW — VENDOR CALL
+    Step 1 — Trigger
+      • "Simulate Call" button appears for each approved vendor in the table
+      • POST /api/vendors/{vendorId}/call { eventId, mode:"demo" }
+
+    Step 2 — Call script generation
+      • generateCallScript(event, vendor) builds a structured script:
+          "Hello, this is Anthea AI calling on behalf of {event.title} organizer.
+          We're planning a {event_type} on {date} at {location} for {guests} guests.
+          We found {vendor.name} and are interested in your services.
+          Could you provide: availability, quote, what's included, payment terms?"
+
+    Step 3 — Demo mode (MVP default when VAPI_API_KEY is absent)
+      • Simulates 2-second call delay
+      • generateVendorResponse() returns a random realistic reply:
+          "Yes, we're available! For {guests} guests our package is ${price_estimate}.
+          We require a 30% deposit to secure the date."
+      • VendorQuote created: transcript stored, quoted_price extracted, outcome: accepted
+
+    Step 4 — Real mode (when VAPI_API_KEY is set)
+      • POST https://api.vapi.ai/call with:
+          phoneNumberId, customer.number (vendor.contact_phone),
+          assistant.firstMessage (the script),
+          model: GPT-4, voice: ElevenLabs professional-female,
+          maxDurationSeconds: 300
+      • Polls for call completion
+      • Extracts price with regex ($\d+ pattern) from live transcript
+      • Extracts availability timeline from transcript keywords
+
+    Step 5 — Result display
+      • Quote transcript shown in dark terminal block on dashboard
+      • Vendor status updated to "quoted"
+
+  FLOW — DEMO OUTBOUND CALL (TEST ANY NUMBER)
+    • Input field in vendor table header accepts any phone number
+    • POST /api/demo-call { phoneNumber, eventId }
+    • Terminal ticker in dashboard streams call log lines in real-time:
+        [SYSTEM]: Initializing Vapi Agent Outbound Protocol…
+        [VAPI]: Connecting to +31 6 12345678…
+        [VAPI]: {transcript lines}
+        [SYSTEM]: Call complete. Duration: {n}s.
+    • Ticker auto-scrolls via tickerRef
+
+
+  ╔══════════════════════════════════════════════════════════════════════════╗
+  ║  FEATURE 4 — AI-GENERATED EVENT INVITES                                ║
+  ║  Agent: InviteRsvpAgent   Route: POST /api/invites/generate            ║
+  ╚══════════════════════════════════════════════════════════════════════════╝
+
+  PURPOSE
+    Generate a branded visual invite (image or video) using PixVerse AI,
+    then provide a shareable RSVP link and downloadable QR code.
+
+  FLOW
+    Step 1 — Trigger
+      • "Generate Invite" button in Invite & RSVP Hub on dashboard
+      • POST /api/invites/generate { eventId, style:"modern" }
+
+    Step 2 — Prompt construction
+      • generateInvitePrompt(event, style) builds a cinematic prompt:
+          Style descriptor: "modern, minimalist, clean lines, contemporary design"
+          Theme by event type: sports_viewing → "energetic, sports themed, team colors"
+                               wedding → "romantic, flowers, celebration"
+          Full prompt: "{event.title} - {theme}, {style}. Date: {date} at {time}.
+                       Venue: {location}. {guests} guests expected.
+                       Cinematic, high quality, 4K, vibrant colors"
+
+    Step 3 — PixVerse API call
+      • POST https://app-api.pixverse.ai/openapi/v2/video/text/generate
+          API-KEY header, Ai-trace-id (unique per request)
+          model: v6, duration: 1 (min for image extraction), quality: 720p
+      • Returns video_id task
+
+    Step 4 — Polling for completion
+      • Polls GET /openapi/v2/video/result/{video_id} up to 5× with 3s delays
+      • Status 1 = complete → extracts cover_url as the invite image
+      • If timeout or ErrCode 500090 (insufficient credits):
+          Falls back to SVG template invite (data:image/svg+xml;base64)
+
+    Step 5 — SVG fallback invite
+      • Generated server-side with Buffer.from(svg).toString("base64")
+      • Contains: gradient background, "You're Invited!" heading,
+          event title, date emoji, time emoji, location emoji,
+          "Scan QR code or visit link to RSVP", Anthea AI footer
+
+    Step 6 — QR code + share URL
+      • generateQRCode(eventId) calls api.qrserver.com:
+          https://api.qrserver.com/v1/create-qr-code/?size=300x300&data={rsvpUrl}
+      • RSVP URL: {appBaseUrl}/rsvp/{eventId}
+          Base URL extracted from request.headers (X-Forwarded-Host or host)
+          No hardcoded localhost
+
+    Step 7 — Default message text
+      "You're invited to {event.title}! 📅 {date} 🕐 {time} 📍 {location}.
+      Please RSVP to let us know if you can make it."
+
+    Step 8 — Invite stored & displayed
+      • db.invites.create() → invite record persisted
+      • Dashboard shows: image preview (16:9 card), download button,
+        "Copy RSVP Link" button, live RSVP response counter
+
+    AMBER WARNING BANNER
+      • If image_url starts with "data:" (SVG fallback detected):
+          "⚠️ Insufficient PixVerse tokens — showing template invite."
+
+
+  ╔══════════════════════════════════════════════════════════════════════════╗
+  ║  FEATURE 5 — WEATHER & LEGAL INTELLIGENCE REPORT                       ║
+  ║  Agent: CostWeatherLegalAgent   Route: POST /api/intelligence          ║
+  ╚══════════════════════════════════════════════════════════════════════════╝
+
+  PURPOSE
+    Provide the organizer with a live weather forecast for the event date,
+    dynamic legal/permit guidance, and a full cost estimate — all in one click.
+
+  FLOW
+    Step 1 — Trigger
+      • "Generate Report" button in Intelligence Panel on dashboard
+      • POST /api/intelligence { eventId }
+      • Route loads event + all vendors from store
+
+    Step 2 — Parallel execution (Promise.all)
+      Three tasks run simultaneously:
+        a) Weather forecast
+        b) Cost estimation
+        c) Legal guidance generation
+
+    Step 2a — Weather forecast (Open-Meteo)
+      • Uses event.lat / event.lng (defaults: 52.3676, 4.9041 — Amsterdam)
+      • Endpoint: GET https://api.open-meteo.com/v1/forecast
+          ?latitude={lat}&longitude={lng}
+          &daily=temperature_2m_max,temperature_2m_min,
+                 precipitation_sum,windspeed_10m_max,weathercode
+          &timezone=auto&start_date={eventDate}&end_date={eventDate}
+      • Parses: avgTemp = (max+min)/2, WMO weathercode → human label
+          0 = Clear sky, 1-3 = Partly cloudy, 45-48 = Foggy,
+          51-67 = Rainy, 71-77 = Snowy, 80-82 = Rain showers,
+          95-99 = Thunderstorm
+      • Fallback: seasonal Amsterdam averages (summer: 20°C partly cloudy,
+          winter: 5°C cold/cloudy, spring: 12°C cloudy, autumn: 10°C rainy)
+
+    Step 2b — Cost estimation
+      • Vendor subtotal: sum of approved vendors' price_estimate
+      • Permit costs (rules-based):
+          +€150 if guest_count > 50
+          +€200 for outdoor/backyard/park location
+          +€100 for wedding/corporate (alcohol permit)
+          +€150 for sports_viewing (music/entertainment permit)
+      • Insurance: €2 × guest_count, ×1.5 for sports_viewing
+      • Contingency: +15% of (vendors + permits + insurance)
+      • Optional: Cala API for accurate breakdown if key is set
+
+    Step 2c — Legal guidance (rules-based)
+      Checks event attributes and generates contextual warnings:
+        • Late night (after 22:00) → noise ordinance warning
+        • Outdoor/backyard → property permit + neighbor impact note
+        • guest_count > 100 → special event permit + emergency services
+        • Wedding/corporate/birthday → liquor license check
+        • Always → food vendor certifications, liability insurance
+        • guest_count > 50 → ADA/accessibility compliance
+
+    Step 3 — Report stored & displayed
+      • db.weatherLegalReports.create() → report persisted
+      • Dashboard shows:
+          Weather warning card (amber) if precipitation > 1mm
+          Temperature display: {temp}°C, condition, 💧 {precip}mm, 💨 {wind}km/h
+          Cost estimate row
+          Legal notes (first 2 shown)
+
+
+  ╔══════════════════════════════════════════════════════════════════════════╗
+  ║  FEATURE 6 — GUEST RSVP SYSTEM                                         ║
+  ║  Route: POST /api/rsvp   Page: /rsvp/[inviteId]                        ║
+  ╚══════════════════════════════════════════════════════════════════════════╝
+
+  PURPOSE
+    A public-facing RSVP page that guests access via the shareable invite
+    link or QR code, without needing to log in.
+
+  FLOW
+    Step 1 — Guest receives invite
+      • Organizer shares /rsvp/{eventId} link (via RSVP Link copy button)
+        or guest scans QR code in the invite image
+
+    Step 2 — Page load
+      • GET /api/events/{inviteId} → loads event + invite data
+      • Page renders:
+          If invite.image_url → full-width image banner (or SVG)
+          Else → purple gradient placeholder with event title
+          Event details: title, date/time, location, QR code if available
+          Invite message text (from generateDefaultMessage)
+
+    Step 3 — Guest fills RSVP form
+      Fields:
+        • Your name (required)
+        • Email or phone (required)
+        • Will you attend? → Yes / No / Maybe (styled toggle buttons)
+        • Comments (optional: dietary restrictions, +1s, questions)
+
+    Step 4 — Submission
+      • POST /api/rsvp { eventId, name, contact, response, comments }
+      • db.guests.create() → Guest record with invite_id from first found invite
+      • Response → confirmation screen with contextual message:
+          "yes"   → "Can't wait to see you there."
+          "maybe" → "We'll keep a spot for you just in case."
+          "no"    → "Thanks for letting us know — we'll miss you!"
+
+    Step 5 — Live count on dashboard
+      • Dashboard Invite & RSVP Hub shows real-time counts:
+          {n} Yes (emerald)  |  {n} No (red)  |  {n} Maybe (amber)
+      • Guest list below with name + response label, scrollable, max 7 rows
+
+
+  ╔══════════════════════════════════════════════════════════════════════════╗
+  ║  FEATURE 7 — MOCK PAYMENT CHECKOUT (MOLLIE)                            ║
+  ║  Agent: PaymentOrderAgent   Route: POST /api/orders/create             ║
+  ╚══════════════════════════════════════════════════════════════════════════╝
+
+  PURPOSE
+    A visually complete Mollie-branded checkout flow that lets the organizer
+    "approve" vendor payments and generate invoice records — without
+    processing any real money.
+
+  FLOW
+    Step 1 — Unlock condition
+      • Checkout Pipeline card is locked until at least one vendor is approved
+      • "Approve vendors above to unlock payment." placeholder shown
+
+    Step 2 — Financial summary
+      • Approved vendors subtotal: sum of all approved vendor price_estimate
+      • AI Handling Fees: €0.00 (waived for demo)
+      • Total Event Budget: displayed in emerald
+
+    Step 3 — Trigger
+      • "Approve Mock Payment" button (green)
+      • POST /api/orders/create { eventId, paymentMethod:"ideal" }
+
+    Step 4 — Order creation (PaymentOrderAgent)
+      • invoiceRef generated: INV-{eventId[0:8].toUpperCase()}-{Date.now()}
+      • For each approved vendor: db.orders.create() with payment_status: "mock_pending"
+      • Mock payment URL generated: https://www.mollie.com/checkout/{invoiceRef}
+      • 1.5s simulated processing delay
+      • All orders updated to payment_status: "mock_paid"
+
+    Step 5 — Confirmation
+      • Order history displayed: invoice reference + "Paid (mock)" label
+      • Button replaced with: "✓ Ledger Verified (Paid)" success state
+      • Footer note: "No real payment is processed."
+
+
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+  8. DASHBOARD — FULL LAYOUT & COMPONENTS
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+The dashboard at /dashboard?eventId={id} is a single-page control center
+organized in two grid rows.
+
+  TOP ROW (3 columns)
+  ┌─────────────────────┬──────────────────────────────────────────────────┐
+  │ LEFT SIDEBAR        │  VENDOR TABLE (spans 2 columns)                  │
+  │  ┌───────────────┐  │  Header: title + source note + demo call input   │
+  │  │ Orchestrator  │  │  Terminal ticker (dark bg, green text)           │
+  │  │ Intake Panel  │  │  Table: Name | Source | Rating | Cost | Actions  │
+  │  │ (event brief) │  │  Empty state: "Find Vendors" CTA button          │
+  │  └───────────────┘  │  Quote transcript (dark terminal) after calls    │
+  │  ┌───────────────┐  │                                                  │
+  │  │ KPI Categories│  │                                                  │
+  │  │ Progress List │  │                                                  │
+  │  └───────────────┘  │                                                  │
+  └─────────────────────┴──────────────────────────────────────────────────┘
+
+  BOTTOM ROW (3 equal columns)
+  ┌─────────────────────┬─────────────────────────┬────────────────────────┐
+  │ INVITE & RSVP HUB   │ INTELLIGENCE PANEL       │ CHECKOUT PIPELINE      │
+  │ PixVerse badge      │ Weather + Legal Agent    │ Mollie badge           │
+  │ Image preview (16:9)│ Weather warning (amber)  │ Vendor subtotal        │
+  │ Generate / Download │ Temp + condition         │ Invoice ref list       │
+  │ Copy RSVP Link      │ Cost estimate rows       │ "Approve Mock Payment" │
+  │ Live RSVP responses │ Legal notes              │ "✓ Ledger Verified"    │
+  └─────────────────────┴─────────────────────────┴────────────────────────┘
+
+  KPI BADGE COLOURS
+    not_started → gray      searching  → blue (animated pulse)
+    shortlisted → amber     approved   → emerald
+    ordered     → violet
+
+  VENDOR BADGE COLOURS
+    shortlisted → amber     contacted  → blue
+    quoted      → violet    approved   → emerald
+    rejected    → red
+
+
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+  9. END-TO-END USER JOURNEY (HAPPY PATH)
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+  1.  User lands on /  →  clicks "Start Planning"  →  arrives at /intake
+
+  2.  Anthea: "Hi! I'm Anthea..."
+      User types: "FIFA World Cup watch party, 50 guests, my backyard, June 21"
+      → OrchestratorAgent extracts: event_type=sports_viewing, guests=50,
+        location=backyard, date=June 21
+
+  3.  Anthea: "What would you like to call this event?"
+      User: "FIFA Watch Party 2026"
+
+  4.  Anthea: "Perfect! Your FIFA Watch Party is set for June 21…"
+      isComplete=true → redirect to /dashboard?eventId=abc123
+
+  5.  Dashboard loads with event brief + 4 KPI categories (food, AV, merch, decor)
+
+  6.  User clicks "Find Vendors"
+      → VendorResearchAgent scores and shortlists 5 vendors per category
+      → Vendor table populates with ratings, costs, and action buttons
+
+  7.  User reviews vendors, clicks "Approve" on 2–3 vendors
+      → Vendor status → "approved"
+      → Checkout total updates
+
+  8.  User clicks "📞 Simulate Call" on an approved vendor
+      → CommunicationAgent runs demo call, stores transcript
+      → Terminal shows call log, quote appears below table
+
+  9.  User clicks "Generate Report"
+      → Open-Meteo API returns weather for June 21
+      → Rules engine generates legal notes (outdoor permit, noise, insurance)
+      → Cost breakdown shows vendor total + permits + contingency
+
+  10. User clicks "Generate Invite"
+      → PixVerse API (or SVG fallback) creates invite image
+      → QR code URL generated pointing to /rsvp/abc123
+      → Invite preview + download + copy link displayed
+
+  11. User shares RSVP link with guests
+      → Guest opens /rsvp/abc123
+      → Fills name, email, clicks "✓ Yes"
+      → POST /api/rsvp → guest record created
+      → Dashboard live count updates: "1 Yes"
+
+  12. User clicks "Approve Mock Payment"
+      → PaymentOrderAgent creates orders for all approved vendors
+      → 1.5s delay → all orders → mock_paid
+      → Ledger Verified ✓ confirmed
+
+
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+  10. UI / DESIGN SYSTEM
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+  COLOUR PALETTE (CSS variables, globals.css)
+    --bg:       #F8FAFC   (page background)
+    --surface:  #FFFFFF   (cards)
+    --border:   #E5E7EB
+    --text:     #111827
+    --muted:    #6B7280
+    --purple:   #7C3AED   (primary brand)
+    --pink:     #EC4899
+    --green:    #059669
+    --amber:    #D97706
+    --red:      #DC2626
+    --blue:     #2563EB
+
+  TYPOGRAPHY
+    Font family: Inter, system-ui, -apple-system, sans-serif
+    Heading letter-spacing: -0.03em (tight, premium)
+
+  LAYOUT
+    Navigation:     Sticky, 64px, white, 1px bottom border, z-40
+    Content width:  max-w-[1100px] centered with px-8 padding
+    Chat width:     max-w-[700px] centered (intake page)
+    Card radius:    12–24px (rounded-2xl / rounded-3xl)
+    Card shadow:    0 1px 3px rgba(0,0,0,0.08)
+
+  ANIMATIONS (defined in globals.css keyframes)
+    fadeUp        0.4s ease-out — cards/sections on mount
+    fadeIn        0.3s ease-out — tooltips, typing indicator
+    scaleIn       0.3s ease-out — success states
+    blink         1.4s infinite — status dots, sparkle elements
+    pulseRing     1.6s infinite — voice recording state
+    spin          1.2s linear  — loading spinners
+    shimmer       1.4s infinite — skeleton loaders
+
+  ACCESSIBILITY
+    :focus-visible → 2px violet outline, offset 3px
+    prefers-reduced-motion → all animations collapsed to 0.01ms
+    WCAG AA contrast maintained (#6B7280 on #FFFFFF ≈ 4.6:1)
+
+
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+  11. ENVIRONMENT VARIABLES (.env.local)
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+  VARIABLE                  USED BY                  STATUS
+  ──────────────────────────────────────────────────────────────────────
+  PIXVERSE_API_KEY          InviteRsvpAgent          Set (limited credits)
+  VAPI_API_KEY              CommunicationAgent       Not set → demo mode
+  VAPI_PHONE_NUMBER         CommunicationAgent       Not set → demo mode
+  CALA_API_KEY              CostWeatherLegalAgent    Not set → manual calc
+  NEXT_PUBLIC_APP_URL       InviteRsvpAgent          Optional (dynamic fallback)
+
+  All agents degrade gracefully when API keys are absent:
+    • No PixVerse key → SVG fallback invite
+    • No Vapi key     → simulated demo call with realistic transcript
+    • No Cala key     → rules-based cost calculation
+    • Open-Meteo      → no key needed, always live
+
+
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+  12. KNOWN LIMITATIONS (MVP SCOPE)
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+  • DATA PERSISTENCE: In-memory store only — all data resets on server restart.
+    No database (Postgres / Supabase / Redis) integrated.
+
+  • AUTHENTICATION: No user login or session management. organizerId is
+    hardcoded to "demo-organizer-1" for the hackathon demo.
+
+  • VENDOR DATA: Mock vendor data from a local JSON fixture. Real web search
+    (Google Custom Search, SerpAPI, Yelp Fusion) is stubbed and not active.
+
+  • VAPI VOICE CALLS: Real outbound calls require VAPI_API_KEY + a provisioned
+    phone number. Without these, calls run in "demo mode" (simulated transcript).
+
+  • PIXVERSE CREDITS: API key is valid but ErrCode 500090 = insufficient credits.
+    SVG fallback is always shown in the current deployment.
+
+  • GEOCODING: lat/lng defaults to Amsterdam (52.3676, 4.9041) unless the user
+    provides a location that is already geocoded. Real geocoding API not integrated.
+
+  • MULTI-TENANCY: Only one event can be "active" per browser session.
+    Multiple concurrent users could conflict in the shared in-memory store.
+
+  • VIDEO INVITES: PixVerse video generation (5s animated clip) is implemented
+    but UI for polling task status is not wired in the dashboard UI.
+
+
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+  13. RUNNING THE APPLICATION
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+  # Install dependencies
+  npm install
+
+  # Start development server (Turbopack)
+  npm run dev
+  → http://localhost:3000
+
+  # Production build
+  npm run build
+  npm run start
+
+  # Type check
+  npx tsc --noEmit --skipLibCheck
+
+================================================================================
+  END OF DOCUMENT
+  Anthea AI — Built for Hackathon · June 2026
+================================================================================
